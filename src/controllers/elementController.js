@@ -33,23 +33,14 @@ exports.getElement = async (req, res) => {
       return res.status(400).json({ error: "Missing element or ship_id in request body" });
     }
 
-    // Trova il modello dell'elemento
-    const elementModel = await ElemetModel.findOne({
-      where: {
-        ESWBS_code: element,
-        ship_model_id: ship_id,
-      },
-      raw: true,
-    });
+    console.log("Serial Number:", element);
+    console.log("Ship:", ship_id);
 
-    if (!elementModel) {
-      return res.status(404).json({ error: "Element model not found" });
-    }
-
-    // Trova l'elemento vero e proprio
+    // 1️⃣ Trova l'elemento tramite serial_number
     const elementData = await Element.findOne({
       where: {
-        element_model_id: elementModel.id,
+        serial_number: element,
+        ship_id: ship_id
       },
       raw: true,
     });
@@ -58,83 +49,94 @@ exports.getElement = async (req, res) => {
       return res.status(404).json({ error: "Element not found" });
     }
 
-    // Trova i ricambi associati
+    // 2️⃣ Recupera il modello collegato
+    const elementModel = await ElemetModel.findOne({
+      where: { id: elementData.element_model_id },
+      raw: true,
+    });
+
+    if (!elementModel) {
+      return res.status(404).json({ error: "Element model not found" });
+    }
+
+    // 3️⃣ Ricambi collegati al modello
     const spares = await Spare.findAll({
       where: { element_model_id: elementModel.id },
       raw: true,
     });
 
-    // Trova tutte le job execution collegate
     const jobExecutions = await JobExecution.findAll({
       where: { element_eswbs_instance_id: elementData.id },
       raw: true,
     });
 
-    // Per ogni jobExecution, recupera le note collegate
-    const jobExecutionIds = jobExecutions.map((job) => job.id);
+    const jobExecutionIds = jobExecutions.map(job => job.id);
 
-    const [vocalNotesRaw, textNotes, photographyNotesRaw] = await Promise.all([
-      VocalNote.findAll({ where: { id: jobExecutionIds }, raw: true }),
-      TextNote.findAll({ where: { id: jobExecutionIds }, raw: true }),
-      PhotographicNote.findAll({ where: { id: jobExecutionIds }, raw: true }),
+    const [vocalNotesRaw, textNotesRaw, photographyNotesRaw] = await Promise.all([
+      VocalNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
+      TextNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
+      PhotographicNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
     ]);
 
     const vocalNotes = await Promise.all(
-      vocalNotesRaw.map(async (note) => {
+      vocalNotesRaw.map(async note => {
         const key = extractS3Key(note.audio_url);
         if (key) {
-          const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-          note.audio_url = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 ora
+          note.audio_url = await getSignedUrl(
+            s3Client,
+            new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }),
+            { expiresIn: 3600 }
+          );
         }
         return note;
       })
     );
 
     const photographyNotes = await Promise.all(
-      photographyNotesRaw.map(async (note) => {
+      photographyNotesRaw.map(async note => {
         const key = extractS3Key(note.image_url);
         if (key) {
-          const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
-          note.image_url = await getSignedUrl(s3Client, command, { expiresIn: 3600 }); // 1 ora
+          note.image_url = await getSignedUrl(
+            s3Client,
+            new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }),
+            { expiresIn: 3600 }
+          );
         }
         return note;
       })
-    ); 
+    );
 
-    const Author = (vocalNotes.length > 0 && vocalNotes[0].author) 
-      ? await User.findOne({
-          where: { id: vocalNotes[0].author },
-          raw: true,
-        }) 
-      : null;
+    const author =
+      vocalNotes.length > 0 && vocalNotes[0].author
+        ? await User.findOne({ where: { id: vocalNotes[0].author }, raw: true })
+        : null;
 
+    // 8️⃣ Parts + Organization
     const parts = elementModel.Manufacturer_ID
-      ? await Parts.findOne({
-          where: { ID: elementModel.Manufacturer_ID },
-          raw: true,
-        })
+      ? await Parts.findOne({ where: { ID: elementModel.Manufacturer_ID }, raw: true })
       : null;
 
-    const Organization = parts && parts.OrganizationCompanyNCAGE_ID
-      ? await OrganizationCompanyNCAGE.findOne({
-          where: { ID: parts.OrganizationCompanyNCAGE_ID },
-          raw: true,
-        })
-      : null;
+    const organization =
+      parts?.OrganizationCompanyNCAGE_ID
+        ? await OrganizationCompanyNCAGE.findOne({
+            where: { ID: parts.OrganizationCompanyNCAGE_ID },
+            raw: true,
+          })
+        : null;
 
-
+    // 9️⃣ Risposta finale
     return res.status(200).json({
       element: elementData,
       model: elementModel,
       spares,
       jobExecutions,
-      parts: parts,
-      organization: Organization,
+      parts,
+      organization,
       notes: {
         vocal: vocalNotes,
-        text: textNotes,
+        text: textNotesRaw,
         photos: photographyNotes,
-        author: Author,
+        author,
       },
     });
 
@@ -184,47 +186,46 @@ exports.updateElement = async (req, res) => {
 };
 
 exports.getElements = async (req, res) => {
-  const { ship_model_id, user_id } = req.params;
+  const { ship_model_id } = req.params;
+  const { teamId } = req.body;
 
   try {
-    if (!ship_model_id) {
-      return res.status(400).json({ error: "Missing ship_id parameter" });
-    }
-
     const ship = await Ship.findOne({
-      where: { id: ship_model_id, user_id: user_id },
+      where: { id: ship_model_id, team: teamId },
     });
 
-    if (!ship) {
-      return res.status(404).json({ error: "Ship not found" });
-    }
+    if (!ship) return res.status(404).json({ error: "Ship not found" });
 
-    const flatElements = await ElemetModel.findAll({
-      where: { ship_model_id: ship.ship_model_id },
-      raw: true,
+    const flatElements = await Element.findAll({
+      where: { ship_id: ship.id },
+      include: [
+        {
+          model: ElemetModel,
+          as: "element_model"
+        },
+      ],
     });
 
-    if (!flatElements || flatElements.length === 0) {
-      return res.status(404).json({ error: "Elements not found" });
-    }
 
-    // Funzione per trasformare in albero
-    const buildTree = (items, parentId = 0) => {
-      return items
-        .filter(item => item.parent_element_model_id === parentId)
-        .map(item => ({
-          id: item.id.toString(),
-          name: item.LCN_name,
-          code: item.ESWBS_code || undefined,
-          children: buildTree(items, item.id),
-        }));
-    };
+    if (!flatElements.length)
+      return res.status(404).json({ error: "No elements found" });
 
-    const tree = buildTree(flatElements);
+    console.log(flatElements[0].element_model.ESWBS_code)
+
+    const tree = flatElements.map(el => ({
+      id: el.id.toString(),
+      name: el.name,
+      code: el.serial_number,
+      eswbs_code: el.element_model.ESWBS_code,
+      children: [] // no parent data → flat structure
+    }));
 
     return res.status(200).json(tree);
+
   } catch (error) {
     console.error("Error retrieving elements:", error);
     return res.status(500).json({ error: "Server error while retrieving elements" });
   }
 };
+
+

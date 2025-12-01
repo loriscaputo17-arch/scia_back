@@ -360,14 +360,12 @@ exports.saveStatusComment = async (req, res) => {
   }
 };
 
+const formatDate = (date) => date.toISOString().slice(0, 19).replace("T", " ") + ".000";
+
 exports.reportAnomaly = async (req, res) => {
   try {
     const jobExecutionId = req.params.id;
-    const { mark } = req.body;
-
-    if (!mark || ![1, 2, 3].includes(Number(mark))) {
-      return res.status(400).json({ error: "Invalid or missing status_id. Allowed values: 1 (Attivo), 2 (In pausa), 3 (Non attivo)" });
-    }
+    const mark = 2; // ANOMALIA
 
     const jobExecution = await JobExecution.findByPk(jobExecutionId);
 
@@ -375,14 +373,47 @@ exports.reportAnomaly = async (req, res) => {
       return res.status(404).json({ error: "JobExecution not found" });
     }
 
+    const recurrencyInfo = await recurrencyType.findByPk(jobExecution.recurrency_type_id);
+
+    if (!recurrencyInfo || !recurrencyInfo.to_days) {
+      return res.status(400).json({ error: "Missing recurrency rule (to_days)" });
+    }
+
+    const today = new Date();
+    const nextEndDate = new Date();
+    nextEndDate.setDate(nextEndDate.getDate() + recurrencyInfo.to_days);
+
+    // ---- Aggiorna la JobExecution attuale ----
     jobExecution.execution_state = mark;
+    jobExecution.ending_date = today;
     await jobExecution.save();
 
-    res.status(200).json({ message: "Status updated successfully", jobExecution });
+    // ---- Crea nuova esecuzione programmata ----
+    const newExecution = await JobExecution.create({
+      job_id: jobExecution.job_id,
+      status_id: jobExecution.status_id,
+      user_id: jobExecution.user_id,
+      element_eswbs_instance_id: jobExecution.element_eswbs_instance_id,
+      starting_date: formatDate(today),      // 👈 sempre oggi
+      ending_date: formatDate(nextEndDate),  // 👈 calcolato con recurrency
+      data_recovery_expiration: jobExecution.data_recovery_expiration,
+      execution_date: formatDate(today),     // 👈 sempre oggi
+      attachment_link: null,
+      recurrency_type_id: jobExecution.recurrency_type_id,
+      ship_id: jobExecution.ship_id,
+      execution_state: null,
+      pauseDate: null
+    });
+
+    return res.status(200).json({
+      message: "Anomaly reported. Future execution scheduled.",
+      completed: jobExecution,
+      nextExecution: newExecution
+    });
 
   } catch (error) {
-    console.error("Error updating status:", error);
-    res.status(500).json({ error: "Error updating status" });
+    console.error("Error reporting anomaly:", error);
+    res.status(500).json({ error: "Error reporting anomaly" });
   }
 };
 
@@ -390,11 +421,6 @@ exports.markAsOk = async (req, res) => {
   try {
     const jobExecutionId = req.params.id;
     const mark = 1;
-    const { brand, model, part_number, description, maintenanceList_id } = req.body;
-
-    if (!mark || ![1, 2, 3].includes(Number(mark))) {
-      return res.status(400).json({ error: "Invalid or missing status_id. Allowed values: 1 (Attivo), 2 (In pausa), 3 (Non attivo)" });
-    }
 
     const jobExecution = await JobExecution.findByPk(jobExecutionId);
 
@@ -402,13 +428,47 @@ exports.markAsOk = async (req, res) => {
       return res.status(404).json({ error: "JobExecution not found" });
     }
 
+    const recurrencyInfo = await recurrencyType.findByPk(jobExecution.recurrency_type_id);
+
+    if (!recurrencyInfo || !recurrencyInfo.to_days) {
+      return res.status(400).json({ error: "Missing recurrency rule (to_days)" });
+    }
+
+    const today = new Date();
+    const nextEndDate = new Date();
+    nextEndDate.setDate(nextEndDate.getDate() + recurrencyInfo.to_days);
+
+    // ---- Aggiorna esecuzione attuale ----
     jobExecution.execution_state = mark;
+    jobExecution.ending_date = today;
     await jobExecution.save();
 
-    res.status(200).json({ message: "Status updated successfully", jobExecution });
+    // ---- Nuova esecuzione ----
+    const newExecution = await JobExecution.create({
+      job_id: jobExecution.job_id,
+      status_id: jobExecution.status_id,
+      user_id: jobExecution.user_id,
+      element_eswbs_instance_id: jobExecution.element_eswbs_instance_id,
+      starting_date: formatDate(today),      // 👈 sempre oggi
+      ending_date: formatDate(nextEndDate),  // 👈 calcolato
+      data_recovery_expiration: jobExecution.data_recovery_expiration,
+      execution_date: formatDate(today),     // 👈 sempre oggi
+      attachment_link: null,
+      recurrency_type_id: jobExecution.recurrency_type_id,
+      ship_id: jobExecution.ship_id,
+      execution_state: null,
+      pauseDate: null
+    });
+
+    return res.status(200).json({
+      message: "Maintenance marked OK. Next execution scheduled.",
+      completed: jobExecution,
+      nextExecution: newExecution
+    });
 
   } catch (error) {
     console.error("Error updating status:", error);
     res.status(500).json({ error: "Error updating status" });
   }
 };
+

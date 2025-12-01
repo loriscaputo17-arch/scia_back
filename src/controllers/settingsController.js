@@ -23,13 +23,20 @@ exports.getSettings = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    const { user_id, is_notifications_enabled_maintenance, maintenance_frequency, is_notifications_enabled_checklist, checklist_frequency, license } = req.body;
+    const {
+      user_id,
+      is_notifications_enabled_maintenance,
+      maintenance_frequency,
+      is_notifications_enabled_checklist,
+      checklist_frequency,
+      license,
+    } = req.body;
 
     if (!user_id) {
       return res.status(400).json({ error: "Missing user_id" });
     }
 
-    const [updated] = await UserSettings.upsert({
+    await UserSettings.upsert({
       user_id,
       is_notifications_enabled_maintenance,
       maintenance_frequency,
@@ -38,13 +45,10 @@ exports.updateSettings = async (req, res) => {
       license,
     });
 
-    if (!updated) {
-      return res.status(500).json({ error: "Failed to update settings" });
-    }
-
-    res.status(200).json({ message: "Settings updated successfully" });
+    return res.status(200).json({ message: "Settings updated successfully" });
   } catch (error) {
     console.error("Error updating user settings:", error);
-    res.status(500).json({ error: "Error updating user settings" });
+    return res.status(500).json({ error: "Error updating user settings" });
   }
 };
+

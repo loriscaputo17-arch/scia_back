@@ -160,8 +160,9 @@ exports.uploadTextNote = async (req, res) => {
     }
 
     const newTextNote = await TextNote.create({
-      failure_id: failureId,
+      //failure_id: failureId,
       text_field: content,
+      task_id: failureId,
       author: authorId,
       type: type
     });
