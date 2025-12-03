@@ -434,6 +434,7 @@ exports.reportAnomaly = async (req, res) => {
     // ---- Aggiorna la JobExecution attuale ----
     jobExecution.execution_state = mark;
     jobExecution.ending_date = today;
+    jobExecution.execution_date = today;
     await jobExecution.save();
 
     // ---- Crea nuova esecuzione programmata ----
@@ -445,7 +446,6 @@ exports.reportAnomaly = async (req, res) => {
       starting_date: formatDate(today),      // 👈 sempre oggi
       ending_date: formatDate(nextEndDate),  // 👈 calcolato con recurrency
       data_recovery_expiration: jobExecution.data_recovery_expiration,
-      execution_date: formatDate(today),     // 👈 sempre oggi
       attachment_link: null,
       recurrency_type_id: jobExecution.recurrency_type_id,
       ship_id: jobExecution.ship_id,
@@ -489,6 +489,7 @@ exports.markAsOk = async (req, res) => {
     // ---- Aggiorna esecuzione attuale ----
     jobExecution.execution_state = mark;
     jobExecution.ending_date = today;
+    jobExecution.execution_date = today;
     await jobExecution.save();
 
     // ---- Nuova esecuzione ----
