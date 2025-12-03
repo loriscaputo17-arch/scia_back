@@ -431,20 +431,18 @@ exports.reportAnomaly = async (req, res) => {
     const nextEndDate = new Date();
     nextEndDate.setDate(nextEndDate.getDate() + recurrencyInfo.to_days);
 
-    // ---- Aggiorna la JobExecution attuale ----
     jobExecution.execution_state = mark;
     jobExecution.ending_date = today;
     jobExecution.execution_date = today;
     await jobExecution.save();
 
-    // ---- Crea nuova esecuzione programmata ----
     const newExecution = await JobExecution.create({
       job_id: jobExecution.job_id,
       status_id: jobExecution.status_id,
       user_id: jobExecution.user_id,
       element_eswbs_instance_id: jobExecution.element_eswbs_instance_id,
-      starting_date: formatDate(today),      // 👈 sempre oggi
-      ending_date: formatDate(nextEndDate),  // 👈 calcolato con recurrency
+      starting_date: formatDate(today),      
+      ending_date: formatDate(nextEndDate),
       data_recovery_expiration: jobExecution.data_recovery_expiration,
       attachment_link: null,
       recurrency_type_id: jobExecution.recurrency_type_id,
