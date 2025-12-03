@@ -1,5 +1,5 @@
 const { recurrencyType, maintenanceLevel, Maintenance_List, Team,
-  JobExecution, Job, JobStatus, Element, ElemetModel, StatusCommentsMaintenance, VocalNote, 
+  JobExecution, Job, Spare, JobStatus, Element, ElemetModel, StatusCommentsMaintenance, VocalNote, 
   TextNote, PhotographicNote, User } = require("../models");
 
 require('dotenv').config();
@@ -47,33 +47,61 @@ exports.getJobs = async (req, res) => {
     if (type_id && type_id !== "undefined") whereClause.recurrency_type_id = type_id;
 
     const jobs = await JobExecution.findAll({
-  where: whereClause,
-  order: [["ending_date", "ASC"]],
-  include: [ 
-    {
-      model: Maintenance_List,
-      as: "maintenance_list",
-      required: false,
+      where: whereClause,
+      order: [["ending_date", "ASC"]],
       include: [
-        { model: maintenanceLevel, as: "maintenance_level", required: false },
-        { model: recurrencyType, as: "recurrency_type", required: false },
+        {
+          model: Maintenance_List,
+          as: "maintenance_list",
+          required: false,
+          include: [
+            { model: maintenanceLevel, as: "maintenance_level", required: false },
+            { model: recurrencyType, as: "recurrency_type", required: false },
+
+            { model: ElemetModel, as: "system_element_model", required: false },
+            { model: ElemetModel, as: "end_item_element_model", required: false },
+            { model: ElemetModel, as: "maintenance_item_element_model", required: false },
+          ],
+        },
+        { model: JobStatus, as: "status", required: false },
+        {
+          model: Element,
+          as: "Element",
+          required: false,
+          include: [{ model: ElemetModel, as: "element_model", required: false }],
+        },
+        { model: VocalNote, as: "vocalNotes", where: { type: "maintenance" }, required: false },
+        { model: TextNote, as: "textNotes", where: { type: "maintenance" }, required: false },
+        { model: PhotographicNote, as: "photographicNotes", where: { type: "maintenance" }, required: false },
       ],
-    },
-    { model: JobStatus, as: "status", required: false },
-    {
-      model: Element,
-      as: "Element",
-      required: false,
-      include: [{ model: ElemetModel, as: "element_model", required: false }],
-    },
-    { model: VocalNote, as: "vocalNotes", where: { type: "maintenance" }, required: false },
-    { model: TextNote, as: "textNotes", where: { type: "maintenance" }, required: false },
-    { model: PhotographicNote, as: "photographicNotes", where: { type: "maintenance" }, required: false },
-  ],
-});
+    });
 
+    // 📌 Per ogni job, calcolo la lista di tutti i model_id possibili
+    const enrichedJobs = await Promise.all(
+      jobs.map(async (job) => {
+        const ml = job.maintenance_list;
+        const elementModel = job.Element?.element_model;
 
-    res.status(200).json({ jobs });
+        const modelIds = [
+          elementModel?.id,
+          ml?.System_ElementModel_ID,
+          ml?.End_Item_ElementModel_ID,
+          ml?.Maintenance_Item_ElementModel_ID,
+        ].filter(Boolean);
+
+        // 🔍 Trova tutti gli spare collegati ai modelIds
+        const spares = await Spare.findAll({
+          where: { element_model_id: modelIds },
+        });
+
+        return {
+          ...job.toJSON(),
+          spares,
+        };
+      })
+    );
+
+    res.status(200).json({ jobs: enrichedJobs });
   } catch (error) {
     console.error("Error fetching jobs:", error);
     res.status(500).json({ error: "Error fetching jobs" });
@@ -175,7 +203,7 @@ exports.getJob = async (req, res) => {
       return res.status(400).json({ error: "Missing taskId" });
     }
 
-    // 🔹 Recupera la singola JobExecution con join diretta alla Maintenance_List
+    // ⭐ Recupera tutta la JobExecution con tutti i modelli collegati
     const jobs = await JobExecution.findAll({
       where: { id: taskId },
       order: [["ending_date", "ASC"]],
@@ -183,46 +211,50 @@ exports.getJob = async (req, res) => {
         {
           model: Maintenance_List,
           as: "maintenance_list",
-          required: false,
           include: [
-            {
-              model: maintenanceLevel,
-              as: "maintenance_level",
-              required: false,
-            },
-            {
-              model: recurrencyType,
-              as: "recurrency_type",
-              required: false,
-            },
+            { model: maintenanceLevel, as: "maintenance_level" },
+            { model: recurrencyType, as: "recurrency_type" },
+
+            { model: ElemetModel, as: "system_element_model" },
+            { model: ElemetModel, as: "end_item_element_model" },
+            { model: ElemetModel, as: "maintenance_item_element_model" },
           ],
-        }, 
-        {
-          model: recurrencyType,
-          as: "recurrency_type",
-          required: false,
         },
-        {
-          model: JobStatus,
-          as: "status",
-          required: false,
-        },
+
+        { model: recurrencyType, as: "recurrency_type" },
+        { model: JobStatus, as: "status" },
+
         {
           model: Element,
           as: "Element",
-          required: false,
           include: [
             {
               model: ElemetModel,
               as: "element_model",
-              required: false,
             },
           ],
         },
       ],
     });
 
-    // 🔹 Funzione per generare link firmato S3
+    // -----------------------------------------------------------
+    //    FUNZIONE PER RECUPERARE SPARES DEI 4 ELEMENT MODEL
+    // -----------------------------------------------------------
+    const getSparesForModels = async (models) => {
+      const ids = models
+        .filter(Boolean)
+        .map((m) => m.id);
+
+      if (ids.length === 0) return [];
+
+      return await Spare.findAll({
+        where: { element_model_id: ids },
+      });
+    };
+
+    // -----------------------------------------------------------
+    //       GENERAZIONE URL S3 (rimasto invariato)
+    // -----------------------------------------------------------
     const getSignedFileUrl = async (fileName) => {
       try {
         const list = await s3
@@ -250,15 +282,29 @@ exports.getJob = async (req, res) => {
       }
     };
 
-    // 🔹 Aggiungo documentFileUrl con pagina opzionale
+    // -----------------------------------------------------------
+    //     ARRICCHIMENTO RISPOSTA (AGGIUNGO SPARES)
+    // -----------------------------------------------------------
     const enrichedJobs = await Promise.all(
       jobs.map(async (job) => {
-        let documentFileUrl = null;
+        
+        // 🔹 Estrai i 4 model
+        const models = [
+          job.Element?.element_model,
+          job.maintenance_list?.system_element_model,
+          job.maintenance_list?.end_item_element_model,
+          job.maintenance_list?.maintenance_item_element_model,
+        ];
 
+        // 🔹 Recupera spare collegati
+        const spares = await getSparesForModels(models);
+
+        // 🔹 Genera URL PDF
+        let documentFileUrl = null;
         const referenceDoc = job.maintenance_list?.Reference_document;
+
         if (referenceDoc) {
           documentFileUrl = await getSignedFileUrl(referenceDoc);
-
           const desiredPage = page || job.maintenance_list?.page;
           if (documentFileUrl && desiredPage) {
             documentFileUrl = `${documentFileUrl}#page=${desiredPage}`;
@@ -267,12 +313,14 @@ exports.getJob = async (req, res) => {
 
         return {
           ...job.toJSON(),
+          spares, // ⭐ aggiungo gli spare in risposta
           documentFileUrl,
         };
       })
     );
 
     res.status(200).json({ jobs: enrichedJobs });
+
   } catch (error) {
     console.error("Error fetching job:", error);
     res.status(500).json({ error: "Error fetching job" });
@@ -452,7 +500,6 @@ exports.markAsOk = async (req, res) => {
       starting_date: formatDate(today),      // 👈 sempre oggi
       ending_date: formatDate(nextEndDate),  // 👈 calcolato
       data_recovery_expiration: jobExecution.data_recovery_expiration,
-      execution_date: formatDate(today),     // 👈 sempre oggi
       attachment_link: null,
       recurrency_type_id: jobExecution.recurrency_type_id,
       ship_id: jobExecution.ship_id,

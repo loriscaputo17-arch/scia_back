@@ -113,10 +113,29 @@ Maintenance_List.hasMany(JobExecution, {
   as: "executions",
 });
 
+Cart.belongsTo(Spare, { foreignKey: "spare_id", as: "spare" });
+Spare.hasMany(Cart, { foreignKey: "spare_id", as: "cartItems" });
+
+Maintenance_List.belongsTo(ElemetModel, {
+  foreignKey: "System_ElementModel_ID",
+  as: "system_element_model",
+});
+
+Maintenance_List.belongsTo(ElemetModel, {
+  foreignKey: "End_Item_ElementModel_ID",
+  as: "end_item_element_model",
+});
+
+Maintenance_List.belongsTo(ElemetModel, {
+  foreignKey: "Maintenance_Item_ElementModel_ID",
+  as: "maintenance_item_element_model",
+});
+
 Maintenance_List.belongsTo(maintenanceLevel, {
   foreignKey: "MaintenanceLevel_ID",
   as: "maintenance_level",
 });
+
 Maintenance_List.belongsTo(MaintenanceType, {
   foreignKey: "Maintenance_type_id",
   as: "maintenance_type",
@@ -130,7 +149,6 @@ Maintenance_List.belongsTo(ElemetModel, {
   as: "element_model",
 });
 
-/* -------------------------- RELAZIONI ELEMENT ↔ ELEMENT MODEL -------------------------- */
 Element.belongsTo(ElemetModel, {
   foreignKey: "element_model_id",
   as: "element_model",
