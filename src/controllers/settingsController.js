@@ -25,11 +25,26 @@ exports.updateSettings = async (req, res) => {
   try {
     const {
       user_id,
-      is_notifications_enabled_maintenance,
-      maintenance_frequency,
-      is_notifications_enabled_checklist,
-      checklist_frequency,
+
+      // notifiche standard
+      isNotificationsEnabledMaintenance,
+      maintenanceFrequency,
+      isNotificationsEnabledChecklist,
+      checklistFrequency,
       license,
+
+      // upcoming
+      isUpcomingMaintenanceEnabled,
+      isUpcomingChecklistEnabled,
+      isUpcomingSpareEnabled,
+
+      // planning
+      isPlanningMaintenanceEnabled,
+      planningMaintenanceFrequency,
+      isPlanningChecklistEnabled,
+      planningChecklistFrequency,
+      isPlanningSpareEnabled,
+      planningSpareFrequency,
     } = req.body;
 
     if (!user_id) {
@@ -38,17 +53,32 @@ exports.updateSettings = async (req, res) => {
 
     await UserSettings.upsert({
       user_id,
-      is_notifications_enabled_maintenance,
-      maintenance_frequency,
-      is_notifications_enabled_checklist,
-      checklist_frequency,
+
+      // notifiche standard
+      is_notifications_enabled_maintenance: isNotificationsEnabledMaintenance,
+      maintenance_frequency: maintenanceFrequency,
+      is_notifications_enabled_checklist: isNotificationsEnabledChecklist,
+      checklist_frequency: checklistFrequency,
       license,
+
+      // upcoming
+      is_upcoming_maintenance_enabled: isUpcomingMaintenanceEnabled,
+      is_upcoming_checklist_enabled: isUpcomingChecklistEnabled,
+      is_upcoming_spare_enabled: isUpcomingSpareEnabled,
+
+      // planning
+      is_planning_maintenance_enabled: isPlanningMaintenanceEnabled,
+      planning_maintenance_frequency: planningMaintenanceFrequency,
+      is_planning_checklist_enabled: isPlanningChecklistEnabled,
+      planning_checklist_frequency: planningChecklistFrequency,
+      is_planning_spare_enabled: isPlanningSpareEnabled,
+      planning_spare_frequency: planningSpareFrequency,
     });
 
-    return res.status(200).json({ message: "Settings updated successfully" });
+    res.status(200).json({ message: "Settings updated successfully" });
   } catch (error) {
     console.error("Error updating user settings:", error);
-    return res.status(500).json({ error: "Error updating user settings" });
+    res.status(500).json({ error: "Error updating user settings" });
   }
 };
 

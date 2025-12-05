@@ -153,9 +153,20 @@ Element.belongsTo(ElemetModel, {
   foreignKey: "element_model_id",
   as: "element_model",
 });
+
 ElemetModel.hasMany(Element, {
   foreignKey: "element_model_id",
   as: "elements",
+});
+
+Location.belongsTo(Warehouses, {
+  foreignKey: "warehouse_id",
+  as: "warehouseInfo",
+});
+
+Warehouses.hasMany(Location, {
+  foreignKey: "warehouse_id",
+  as: "locations",
 });
 
 /* -------------------------- RELAZIONI NOTE ↔ JOB EXECUTION -------------------------- */

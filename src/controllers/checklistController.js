@@ -60,7 +60,7 @@ exports.getTasks = async (req, res) => {
           as: "vocalNotes",
           where: { type: "maintenance" },
           required: false,
-        },
+        }, 
         {
           model: TextNote,
           as: "textNotes",

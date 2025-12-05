@@ -8,7 +8,7 @@ const Location = sequelize.define("Location", {
         autoIncrement: true,
         primaryKey: true
       },
-      warehouse: {
+      warehouse_id: {
         type: DataTypes.STRING(20),
         allowNull: false
       },

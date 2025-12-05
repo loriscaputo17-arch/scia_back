@@ -30,7 +30,7 @@ exports.getLocations = async (req, res) => {
     }
 
     const locations = await Location.findAll({
-      where: { ship_id, user_id },
+      where: { ship_id },
       include: [
         {
           model: Warehouses,

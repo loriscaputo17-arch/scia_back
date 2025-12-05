@@ -8,8 +8,10 @@ const logger = require('../logger');
 
 logger.info('Applicazione avviata');
 logger.error('Errore di test');
+//require("./cron/notificationScheduler.js");
 
 const shipRoutes = require("./routes/shipRoutes");
+const summaryRoutes = require("./routes/summaryRoutes");
 const authRoutes = require("./routes/authRoutes");
 const jobExecutionRoutes = require("./routes/jobExecutionRoutes");
 const elementRoutes = require("./routes/elementsRoutes");
@@ -78,6 +80,7 @@ app.use(express.json());
 
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/ships", shipRoutes);
+app.use("/api/summary", summaryRoutes);
 app.use("/api/auth", authRoutes); 
 app.use("/jobs-executions", jobExecutionRoutes);
 app.use("/api/element", elementRoutes);

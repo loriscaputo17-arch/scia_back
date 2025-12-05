@@ -413,7 +413,7 @@ const formatDate = (date) => date.toISOString().slice(0, 19).replace("T", " ") +
 exports.reportAnomaly = async (req, res) => {
   try {
     const jobExecutionId = req.params.id;
-    const mark = 2; // ANOMALIA
+    const { mark } = req.body;
 
     const jobExecution = await JobExecution.findByPk(jobExecutionId);
 
@@ -421,6 +421,27 @@ exports.reportAnomaly = async (req, res) => {
       return res.status(404).json({ error: "JobExecution not found" });
     }
 
+    // -------------------------------
+    // 🛑 CASO ANOMALIA (mark === 3)
+    // -------------------------------
+    if (mark === 3) {
+      jobExecution.execution_state = 3;
+
+      // ❌ NON aggiornare execution_date
+      // ❌ NON aggiornare ending_date
+      // ❌ NON creare nuova istanza
+
+      await jobExecution.save();
+
+      return res.status(200).json({
+        message: "Anomaly reported. No new execution created.",
+        updated: jobExecution
+      });
+    }
+
+    // --------------------------------------------------------
+    // ✔️ CASI NORMALI (mark = 0,1,2 ecc → continua la ricorrenza)
+    // --------------------------------------------------------
     const recurrencyInfo = await recurrencyType.findByPk(jobExecution.recurrency_type_id);
 
     if (!recurrencyInfo || !recurrencyInfo.to_days) {
@@ -432,8 +453,8 @@ exports.reportAnomaly = async (req, res) => {
     nextEndDate.setDate(nextEndDate.getDate() + recurrencyInfo.to_days);
 
     jobExecution.execution_state = mark;
-    jobExecution.ending_date = today;
     jobExecution.execution_date = today;
+    jobExecution.ending_date = today;
     await jobExecution.save();
 
     const newExecution = await JobExecution.create({
@@ -441,7 +462,7 @@ exports.reportAnomaly = async (req, res) => {
       status_id: jobExecution.status_id,
       user_id: jobExecution.user_id,
       element_eswbs_instance_id: jobExecution.element_eswbs_instance_id,
-      starting_date: formatDate(today),      
+      starting_date: formatDate(today),
       ending_date: formatDate(nextEndDate),
       data_recovery_expiration: jobExecution.data_recovery_expiration,
       attachment_link: null,
@@ -449,10 +470,10 @@ exports.reportAnomaly = async (req, res) => {
       ship_id: jobExecution.ship_id,
       execution_state: null,
       pauseDate: null
-    });
+    });  
 
     return res.status(200).json({
-      message: "Anomaly reported. Future execution scheduled.",
+      message: "Execution completed. Next execution scheduled.",
       completed: jobExecution,
       nextExecution: newExecution
     });

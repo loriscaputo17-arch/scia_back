@@ -24,23 +24,31 @@ exports.getCart = async (req, res) => {
     if (user_id) where.user_id = user_id;
 
     const cartItems = await Cart.findAll({
-      where,
+  where,
+  include: [
+    {
+      model: Spare,
+      as: "spare",
       include: [
         {
-          model: Spare,
+          model: ElemetModel,
+          as: "elementModel"
+        },
+        {
+          model: Parts,
+          as: "part",
           include: [
-            { model: ElemetModel, as: "elementModel" },
-            { 
-              model: Parts, 
-              as: "part",
-              include: [
-                { model: OrganizationCompanyNCAGE, as: "organizationCompanyNCAGE" }
-              ]
+            {
+              model: OrganizationCompanyNCAGE,
+              as: "organizationCompanyNCAGE"
             }
           ]
         }
       ]
-    });
+    }
+  ]
+});
+
 
     res.status(200).json({ cart: cartItems });
   } catch (error) {

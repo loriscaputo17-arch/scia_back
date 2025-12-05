@@ -208,7 +208,7 @@ exports.getSpares = async (req, res) => {
 
       const locations = await Location.findAll({
         where: { id: locationIds },
-        attributes: ['id', 'location', 'ship_id', 'warehouse']
+        attributes: ['id', 'location', 'ship_id', 'warehouse_id']
       });
 
       const warehouseIds = [...new Set(locations.map(loc => loc.warehouse))];
@@ -331,7 +331,7 @@ exports.moveSpare = async (req, res) => {
 
     if (!locationRecord) {
       locationRecord = await Location.create({
-        warehouse: 1,
+        warehouse_id: 1,
         location: newLocation,
         ship_id: ship_id,
         user_id: user_id
@@ -437,7 +437,7 @@ exports.submitProduct = async (req, res) => {
 
     if (!locationRecord) {
       locationRecord = await Location.create({
-        warehouse: warehouse,
+        warehouse_id: warehouse,
         location: location,
         ship_id: ship_id,
         user_id: user_id
