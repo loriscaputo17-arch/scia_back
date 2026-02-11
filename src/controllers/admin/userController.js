@@ -92,10 +92,6 @@ exports.createUsers = async (req, res) => {
   }
 };
 
-/**
- * DELETE /api/admin/users/deleteUser/:id
- * Elimina completamente un utente e le sue associazioni
- */
 exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -109,5 +105,57 @@ exports.deleteUser = async (req, res) => {
   } catch (error) {
     console.error("Errore durante l'eliminazione dell'utente:", error);
     res.status(500).json({ error: "Errore durante l'eliminazione" });
+  }
+};
+
+exports.updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { first_name, last_name, role, active, password } = req.body;
+
+    const user = await User.findByPk(id, {
+      include: [{ model: UserLogin, as: "login" }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "Utente non trovato" });
+    }
+
+    await user.update({ first_name, last_name });
+
+    if (user.login) {
+      if (typeof active === "boolean" && !active) {
+        await UserLogin.destroy({ where: { user_id: id } });
+      } else if (password && password.length > 0) {
+        const hash = await bcrypt.hash(password, 10);
+        await user.login.update({ password_hash: hash });
+      }
+    }
+
+    if (role) {
+      await UserRole.update(
+        { role_name: role },
+        { where: { user_id: id } }
+      );
+    }
+
+    const updated = await User.findByPk(id, {
+      include: [
+        { model: UserLogin, as: "login" },
+        { model: UserRole, as: "role" },
+      ],
+    });
+
+    return res.json({
+      id: updated.id,
+      first_name: updated.first_name,
+      last_name: updated.last_name,
+      email: updated.login?.email || null,
+      role: updated.role?.role_name || "N/A",
+      active: !!updated.login,
+    });
+  } catch (error) {
+    console.error("Errore aggiornamento utente:", error);
+    res.status(500).json({ error: "Errore aggiornamento utente" });
   }
 };

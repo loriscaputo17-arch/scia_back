@@ -1,5 +1,5 @@
 const { ProjectCommission, Ship, Shipyards,
-   shipModel, JobExecution, Maintenance_List } = require("../../models");
+   shipModel, JobExecution, Maintenance_List, sequelize } = require("../../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
@@ -15,26 +15,89 @@ exports.getProjects = async (req, res) => {
 }; 
 
 exports.createProject = async (req, res) => {
-  try {
-    const { name, description, shipyardId, ownerId, date_order, date_delivery } = req.body;
+  const t = await sequelize.transaction();
 
-    if (!name || !shipyardId || !ownerId) {
-      return res.status(400).json({ error: "Nome, Shipyard e Owner sono obbligatori" });
+  try {
+    const { general, ship } = req.body;
+
+    if (!general) {
+      await t.rollback();
+      return res.status(400).json({ error: "Dati generali mancanti" });
     }
 
-    const newProject = await ProjectCommission.create({
+    const {
       name,
       description,
-      shipyard_builder_id: shipyardId,
-      owner_id: ownerId,
+      houseofride,
+      owner_id,
+      shipyard_builder_id,
       date_order,
       date_delivery,
-    });
+    } = general;
 
-    return res.status(201).json(newProject);
+    if (!name || !owner_id) {
+      await t.rollback();
+      return res
+        .status(400)
+        .json({ error: "Nome e amministratore obbligatori" });
+    }
+
+    // 1️⃣ CREA COMMESSA
+    const project = await ProjectCommission.create(
+      {
+        name,
+        description,
+        houseofride,
+        owner_id,
+        shipyard_builder_id: shipyard_builder_id || null,
+        date_order,
+        date_delivery,
+      },
+      { transaction: t }
+    );
+
+    // 2️⃣ MODELLI + NAVI
+    if (ship?.shipsByModel) {
+      for (const [modelId, ships] of Object.entries(ship.shipsByModel)) {
+
+        // 🔹 assegna modello esistente alla commessa
+        const model = await shipModel.findByPk(modelId, { transaction: t });
+
+        if (!model) {
+          await t.rollback();
+          return res.status(404).json({
+            error: `Modello nave ${modelId} non trovato`,
+          });
+        }
+
+        await model.update(
+          { commission_id: project.id },
+          { transaction: t }
+        );
+
+        // 🔹 crea le navi
+        for (const shipData of ships) {
+          await Ship.create(
+            {
+              ship_model_id: model.id,
+              unit_name: shipData.name,
+            },
+            { transaction: t }
+          );
+        }
+      }
+    }
+
+    await t.commit();
+
+    return res.status(201).json(project);
+
   } catch (error) {
-    console.error("Errore creando commessa:", error);
-    return res.status(500).json({ error: "Errore creando la commessa" });
+    await t.rollback();
+    console.error("Errore creando commessa completa:", error);
+    return res.status(500).json({
+      error: "Errore creando commessa con modelli e navi",
+    });
   }
 };
 

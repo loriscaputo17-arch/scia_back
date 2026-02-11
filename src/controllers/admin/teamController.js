@@ -1,5 +1,6 @@
-const { Team, User, TeamMember, UserLogin, UserRole } = require("../../models");
+const { Team, User, TeamMember, UserLogin, UserRole, ESWBS_Glossary } = require("../../models");
 require("dotenv").config();
+const { Op } = require("sequelize");
 
 exports.getTeams = async (req, res) => {
   try {
@@ -96,6 +97,12 @@ exports.updateTeam = async (req, res) => {
   }
 };
 
+const ALLOWED_LEVEL1 = [
+  "100", "200", "301", "400", "500",
+  "600", "700", "800", "900",
+];
+
+
 exports.getTeamMembers = async (req, res) => {
   try {
     const { id } = req.params;
@@ -110,13 +117,13 @@ exports.getTeamMembers = async (req, res) => {
           attributes: ["id", "first_name", "last_name"],
           include: [
             {
-              model: require("../../models/userLogin"),
+              model: UserLogin,
               as: "login",
               attributes: ["email"],
             },
             {
-              model: require("../../models/userRole"),
-              as: "role", // 👈 coerente con la definizione User.hasOne(UserRole, { as: "role" })
+              model: UserRole,
+              as: "role",
               attributes: ["rank", "type", "Elements", "role_name"],
             },
           ],
@@ -124,10 +131,63 @@ exports.getTeamMembers = async (req, res) => {
       ],
     });
 
-    // 🔹 Prepara il risultato completo con tutte le info utente + ruolo + elementi
+    const allElements = [
+      ...new Set(
+        members.flatMap((m) => {
+          const elements = m.user?.role?.Elements;
+          if (!elements) return [];
+
+          return Array.isArray(elements)
+            ? elements
+            : elements.split(",").map((e) => e.trim());
+        })
+      ),
+    ];
+
+   const glossaryRows = await ESWBS_Glossary.findAll({
+      where: {
+        level1: {
+          [Op.in]: ALLOWED_LEVEL1,
+        },
+      },
+      attributes: ["level1", "name_navsea_S9040IDX"],
+    });
+
+    const glossaryMap = glossaryRows.reduce((acc, row) => {
+      acc[row.level1] = row.name_navsea_S9040IDX;
+      return acc;
+    }, {});
+
     const users = members.map((m) => {
       const u = m.user?.toJSON();
       const r = u?.role || {};
+
+      const elementsRaw = r.Elements || [];
+
+      const elementsArray = (
+        Array.isArray(elementsRaw)
+          ? elementsRaw
+          : typeof elementsRaw === "string"
+            ? elementsRaw.split(",")
+            : []
+      )
+        .map((e) =>
+          typeof e === "string"
+            ? e.trim()
+            : typeof e === "object" && e.level1
+              ? String(e.level1).trim()
+              : null
+        )
+        .filter(
+          (e) =>
+            e &&
+            ALLOWED_LEVEL1.includes(e)
+        );
+
+      const elementsWithGlossary = elementsArray.map((el) => ({
+        level1: el,
+        name_navsea_S9040IDX: glossaryMap[el] || null,
+      }));
 
       return {
         id: u?.id,
@@ -138,7 +198,7 @@ exports.getTeamMembers = async (req, res) => {
         role_name: r.role_name || "",
         rank: r.rank || "",
         type: r.type || "",
-        elements: r.Elements || "",
+        elements: elementsWithGlossary,
       };
     });
 
@@ -150,7 +210,6 @@ exports.getTeamMembers = async (req, res) => {
       .json({ error: "Errore nel recupero membri del team" });
   }
 };
-
 
 exports.updateTeamMembers = async (req, res) => {
   try {
