@@ -37,12 +37,14 @@ const Parts = require("./Parts");
 const OrganizationCompanyNCAGE = require("./OrganizationCompanyNCAGE");
 const TeamMember = require("./teamMember");
 const ProjectCommission = require("./projectCommission");
+const ProjectCommissionShip = require("./projectCommissionShip");
 const Shipyards = require("./shipyard");
 const shipModel = require("./shipModel");
 const Owner = require("./owner");
 const ESWBS_Glossary = require("./ESWBS_Glossary");
 const MaintenanceGroup = require("./maintenanceGroup");
 const Threshold = require("./Threshold");
+const OrganizationCompanyNCAGE_Entity = require("./OrganizationCompanyNCAGE_Entity");
 
 /* -------------------------- RELAZIONI OWNER / SHIPYARD -------------------------- */
 Owner.belongsTo(OrganizationCompanyNCAGE, {
@@ -247,6 +249,47 @@ User.hasMany(Failures, {
   constraints: false,
 });
 
+OrganizationCompanyNCAGE.hasMany(
+  OrganizationCompanyNCAGE_Entity,
+  { foreignKey: "company_id", as: "ncageEntities" }
+);
+
+OrganizationCompanyNCAGE_Entity.belongsTo(
+  OrganizationCompanyNCAGE,
+  { foreignKey: "company_id", as: "company" }
+);
+
+ProjectCommission.hasMany(ProjectCommissionShip, {
+  foreignKey: "project_commission_id",
+  as: "projectShipModels",
+});
+
+ProjectCommissionShip.belongsTo(ProjectCommission, {
+  foreignKey: "project_commission_id",
+  as: "projectCommission",
+});
+
+ProjectCommissionShip.belongsTo(shipModel, {
+  foreignKey: "ship_id",
+  as: "shipModel",
+});
+
+shipModel.hasMany(ProjectCommissionShip, {
+  foreignKey: "ship_id",
+  as: "projectLinks",
+});
+
+shipModel.belongsTo(Shipyards, {
+  foreignKey: "shipyard_id",
+  as: "shipyard",
+});
+
+Shipyards.hasMany(shipModel, {
+  foreignKey: "shipyard_id",
+  as: "shipModels",
+});
+
+
 /* -------------------------- RELAZIONI FINALI -------------------------- */
 const db = {
   sequelize,
@@ -286,12 +329,14 @@ const db = {
   OrganizationCompanyNCAGE,
   TeamMember,
   ProjectCommission,
+  ProjectCommissionShip,
   Shipyards,
   shipModel,
   Owner,
   ESWBS_Glossary,
   MaintenanceGroup,
-  Threshold
+  Threshold,
+  OrganizationCompanyNCAGE_Entity
 };
 
 module.exports = db;

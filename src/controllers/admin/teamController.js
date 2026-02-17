@@ -211,6 +211,94 @@ exports.getTeamMembers = async (req, res) => {
   }
 };
 
+exports.createTeams = async (req, res) => {
+  const transaction = await Team.sequelize.transaction();
+
+  try {
+    const body = Array.isArray(req.body) ? req.body : [req.body];
+    if (!body.length) {
+      return res.status(400).json({ error: "Nessun team da creare" });
+    }
+
+    const createdTeams = [];
+
+    for (const data of body) {
+      const { name, leader_id } = data;
+
+      if (!name || !leader_id) {
+        await transaction.rollback();
+        return res.status(400).json({
+          error: "VALIDATION_ERROR",
+          message: "Nome squadra e leader sono obbligatori",
+        });
+      }
+
+      // 🔹 Verifica leader esistente
+      const leader = await User.findByPk(leader_id, { transaction });
+      if (!leader) {
+        await transaction.rollback();
+        return res.status(404).json({
+          error: "LEADER_NOT_FOUND",
+          message: `Leader con id ${leader_id} non trovato`,
+        });
+      }
+
+      // 🔹 Crea Team (NESSUN controllo di unicità sul leader)
+      const team = await Team.create(
+        {
+          name,
+          team_leader_id: leader_id,
+        },
+        { transaction }
+      );
+
+      // 🔹 Inserisci leader come membro del team
+      await TeamMember.create(
+        {
+          team_id: team.id,
+          user_id: leader_id,
+          is_leader: true,
+        },
+        { transaction }
+      );
+
+      createdTeams.push(team);
+    }
+
+    await transaction.commit();
+
+    const teamsWithLeader = await Team.findAll({
+      where: { id: createdTeams.map((t) => t.id) },
+      include: [
+        {
+          model: User,
+          as: "teamLeader",
+          include: [
+            {
+              model: UserLogin,
+              as: "login",
+              attributes: ["email"],
+            },
+          ],
+        },
+      ],
+    });
+
+    return res.status(201).json({
+      message: "Squadre create con successo",
+      teams: teamsWithLeader,
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("❌ Errore creazione team:", error);
+
+    return res.status(500).json({
+      error: "INTERNAL_SERVER_ERROR",
+      message: "Errore durante la creazione delle squadre",
+    });
+  }
+};
+
 exports.updateTeamMembers = async (req, res) => {
   try {
     const { id } = req.params;

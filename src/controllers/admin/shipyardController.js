@@ -2,6 +2,7 @@ const {
   Shipyards,
   OrganizationCompanyNCAGE,
   shipModel,
+  OrganizationCompanyNCAGE_Entity,
   sequelize,
 } = require("../../models");
 const bcrypt = require("bcryptjs");
@@ -122,27 +123,74 @@ exports.updateShipyard = async (req, res) => {
 };
 
 exports.createShipyards = async (req, res) => {
+  const transaction = await OrganizationCompanyNCAGE.sequelize.transaction();
+
   try {
     const body = Array.isArray(req.body) ? req.body : [req.body];
 
-    const validData = body.filter(
-      (item) =>
-        item.companyName &&
-        item.address &&
-        item.country &&
-        item.OrganizationCompanyNCAGE_ID
-    );
-
-    if (validData.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "Dati mancanti o non validi per la creazione dei cantieri" });
+    if (!body.length) {
+      return res.status(400).json({
+        error: "Nessun dato fornito",
+      });
     }
 
-    const newShipyards = await Shipyards.bulkCreate(validData, { returning: true });
+    const created = [];
 
+    for (const item of body) {
+      const {
+        companyName,
+        address,
+        country,
+        hasNCAGE,
+        organizationCompanyNCAGE,
+      } = item;
+
+      if (!companyName || !address || !country) {
+        throw new Error("Dati obbligatori mancanti");
+      }
+
+      // 1️⃣ CREA OrganizationCompanyNCAGE
+      const organization = await OrganizationCompanyNCAGE.create(
+        {
+          Organization_name: companyName,
+          Country: country,
+          City: organizationCompanyNCAGE?.City ?? null,
+          NCAGE_Code: hasNCAGE
+            ? organizationCompanyNCAGE?.NCAGE_Code ?? null
+            : null,
+        },
+        { transaction }
+      );
+
+      // 2️⃣ CREA Shipyard CON STESSO ID
+      const shipyard = await Shipyards.create(
+        {
+          ID: organization.ID, // 🔥 PK condivisa
+          companyName,
+          address,
+          country,
+          OrganizationCompanyNCAGE_ID: organization.ID,
+        },
+        { transaction }
+      );
+
+      // 3️⃣ TABELLA PONTE
+      await OrganizationCompanyNCAGE_Entity.create(
+        {
+          company_id: organization.ID,
+          entity_type: "Shipyard",
+        },
+        { transaction }
+      );
+
+      created.push(shipyard);
+    }
+
+    await transaction.commit();
+
+    // 4️⃣ RITORNA CON INCLUDE
     const createdWithOrg = await Shipyards.findAll({
-      where: { ID: newShipyards.map((s) => s.ID) },
+      where: { ID: created.map((s) => s.ID) },
       include: [
         {
           model: OrganizationCompanyNCAGE,
@@ -153,9 +201,12 @@ exports.createShipyards = async (req, res) => {
 
     return res.status(201).json(createdWithOrg);
   } catch (error) {
-    console.error("Errore durante la creazione dei cantieri:", error);
-    return res
-      .status(500)
-      .json({ error: "Errore durante la creazione dei cantieri" });
+    await transaction.rollback();
+
+    console.error("❌ Errore createShipyards:", error);
+    return res.status(500).json({
+      error: "CREATE_SHIPYARD_ERROR",
+      message: error.message,
+    });
   }
 };

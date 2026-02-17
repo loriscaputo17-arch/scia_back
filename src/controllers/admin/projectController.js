@@ -1,5 +1,5 @@
 const { ProjectCommission, Ship, Shipyards,
-   shipModel, JobExecution, Maintenance_List, sequelize } = require("../../models");
+   shipModel, JobExecution, Maintenance_List, ProjectCommissionShip, sequelize } = require("../../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
@@ -131,21 +131,38 @@ exports.getProjectById = async (req, res) => {
 
 exports.getShipModelsByProject = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // project_commission_id
 
-    // Esempio: trova i modelli nave collegati a quella commessa
-    const shipModels = await shipModel.findAll({
-      where: { commission_id: id },
+    const rows = await ProjectCommissionShip.findAll({
+      where: { project_commission_id: id },
+      include: [
+        {
+          model: shipModel,
+          as: "shipModel", // ← QUESTO ERA IL PROBLEMA
+          include: [
+            {
+              model: Shipyards,
+              as: "shipyard", // ← anche questo alias è obbligatorio
+            },
+          ],
+        },
+      ],
     });
 
-    if (!shipModels || shipModels.length === 0) {
-      return res.json([]); // nessun modello trovato
+    if (!rows || rows.length === 0) {
+      return res.json([]);
     }
 
-    return res.json(shipModels);
+    // restituiamo SOLO i dati nave (più shipyard dentro)
+    const shipModels = rows.map(r => r.shipModel);
+
+    return res.json(rows);
+
   } catch (error) {
     console.error("Errore nel recupero modelli nave:", error);
-    return res.status(500).json({ error: "Errore nel recupero modelli nave" });
+    return res.status(500).json({
+      error: "Errore nel recupero modelli nave",
+    });
   }
 };
 

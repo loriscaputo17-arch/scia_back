@@ -55,7 +55,8 @@ const UserSettings = sequelize.define(
     },
     planning_maintenance_frequency: {
       type: DataTypes.ENUM("giornaliero", "settimanale", "mensile"),
-      defaultValue: false,
+      allowNull: false,
+      defaultValue: "mensile",
     },
 
     is_planning_checklist_enabled: {
@@ -64,7 +65,8 @@ const UserSettings = sequelize.define(
     },
     planning_checklist_frequency: {
       type: DataTypes.ENUM("giornaliero", "settimanale", "mensile"),
-      defaultValue: false,
+      allowNull: false,
+      defaultValue: "mensile",
     },
 
     is_planning_spare_enabled: {
@@ -73,7 +75,8 @@ const UserSettings = sequelize.define(
     },
     planning_spare_frequency: {
       type: DataTypes.ENUM("giornaliero", "settimanale", "mensile"),
-      defaultValue: false,
+      allowNull: false,
+      defaultValue: "mensile",
     },
     created_at: {
       type: DataTypes.DATE,

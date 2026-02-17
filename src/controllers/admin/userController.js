@@ -88,7 +88,22 @@ exports.createUsers = async (req, res) => {
     res.status(201).json(createdUsers);
   } catch (error) {
     console.error("Errore durante la creazione utenti:", error);
-    res.status(500).json({ error: "Errore durante la creazione utenti" });
+
+    if (
+      error.name === "SequelizeUniqueConstraintError" ||
+      (error.parent && error.parent.code === "ER_DUP_ENTRY")
+    ) {
+      return res.status(409).json({
+        error: "EMAIL_ALREADY_EXISTS",
+        message: "L'email è già già registrata",
+        field: "email",
+      });
+    }
+
+    return res.status(500).json({
+      error: "INTERNAL_SERVER_ERROR",
+      message: "Errore durante la creazione utenti",
+    });
   }
 };
 
