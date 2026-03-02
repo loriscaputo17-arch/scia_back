@@ -99,7 +99,7 @@ exports.getSpare = async (req, res) => {
 
         const locations = await Location.findAll({
           where: { id: locationIds },
-          attributes: ["id", "location", "ship_id", "warehouse"],
+          attributes: ["id", "location", "ship_id", "warehouse_id"],
         });
 
         const warehouseIds = [...new Set(locations.map((loc) => loc.warehouse))];

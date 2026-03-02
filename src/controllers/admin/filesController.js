@@ -30,11 +30,11 @@ exports.getProjectFiles = async (req, res) => {
     const files = await ShipFiles.findAll({
       where: { ship_id: shipModelId },
       order: [["uploaded_at", "DESC"]]
-    });
+    }); 
  
     const signedFiles = await Promise.all(
       files.map(async (file) => {
-        let signedUrl = null;
+        let signedUrl = null; 
         const key = extractS3Key(file.file_link);
 
         if (key) {

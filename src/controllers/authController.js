@@ -42,6 +42,7 @@ exports.loginWithEmail = async (req, res) => {
 
 exports.loginWithPin = async (req, res) => {
   const { pin } = req.body;
+  console.log(pin)
 
   try {
     const userLogin = await UserLogin.findOne({

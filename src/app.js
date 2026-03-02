@@ -8,7 +8,7 @@ const logger = require('../logger');
 
 logger.info('Applicazione avviata');
 logger.error('Errore di test');
-//require("./cron/notificationScheduler.js");
+//require("./cron/notificationScheduler.js"); 
 
 const shipRoutes = require("./routes/shipRoutes");
 const summaryRoutes = require("./routes/summaryRoutes");
