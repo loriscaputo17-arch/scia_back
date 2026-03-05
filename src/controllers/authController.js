@@ -38,7 +38,7 @@ exports.loginWithEmail = async (req, res) => {
     console.error("Error during login:", error);
     res.status(500).json({ error: "Error during login" });
   }
-};
+}; 
 
 exports.loginWithPin = async (req, res) => {
   const { pin } = req.body;

@@ -489,49 +489,106 @@ exports.markAsOk = async (req, res) => {
     const jobExecutionId = req.params.id;
     const mark = 1;
 
+    console.log("markAsOk jobExecutionId:", jobExecutionId);
+
     const jobExecution = await JobExecution.findByPk(jobExecutionId);
 
     if (!jobExecution) {
       return res.status(404).json({ error: "JobExecution not found" });
     }
 
-    const recurrencyInfo = await recurrencyType.findByPk(jobExecution.recurrency_type_id);
+    // ── Trova recurrency_type_id (diretto o dalla Maintenance_List) ──────────
+    let recurrencyTypeId = jobExecution.recurrency_type_id;
 
-    if (!recurrencyInfo || !recurrencyInfo.to_days) {
-      return res.status(400).json({ error: "Missing recurrency rule (to_days)" });
+    if (!recurrencyTypeId) {
+      // Fallback: cerca il job con la sua maintenance_list
+      const jobWithList = await JobExecution.findByPk(jobExecutionId, {
+        include: [
+          {
+            model: Maintenance_List,
+            as: "maintenance_list",
+            include: [{ model: recurrencyType, as: "recurrency_type" }],
+          },
+        ],
+      });
+
+      recurrencyTypeId = jobWithList?.maintenance_list?.recurrency_type?.id ?? null;
+      console.log("Fallback recurrencyTypeId dalla maintenance_list:", recurrencyTypeId);
+    }
+
+    if (!recurrencyTypeId) {
+      return res.status(400).json({ error: "Missing recurrency_type_id on JobExecution and on Maintenance_List" });
+    }
+
+    const recurrencyInfo = await recurrencyType.findByPk(recurrencyTypeId);
+
+    // ── Calcola to_days anche se manca il campo (da name) ─────────────────────
+    let toDays = recurrencyInfo?.to_days;
+
+    if (!toDays && recurrencyInfo?.name) {
+      const n = recurrencyInfo.name.toLowerCase();
+      if (n.includes("daily")   || n.includes("giorn"))  toDays = 1;
+      if (n.includes("weekly")  || n.includes("settim")) toDays = 7;
+      if (n.includes("biweekly"))                         toDays = 14;
+      if (n.includes("monthly") || n.includes("mensil")) toDays = 30;
+      if (n.includes("bimest"))                           toDays = 60;
+      if (n.includes("trimestr") || n.includes("quarter")) toDays = 90;
+      if (n.includes("semest"))                           toDays = 180;
+      if (n.includes("annual")  || n.includes("annual") || n.includes("annua")) toDays = 365;
+      if (n.includes("bienni"))                           toDays = 730;
+      if (n.includes("trienni"))                          toDays = 1095;
+
+      // "every X days/weeks/months"
+      const m = n.match(/every\s+([\d.]+)\s*(day|week|month|year)/i);
+      if (m) {
+        const q = parseFloat(m[1]);
+        const u = m[2].toLowerCase();
+        if (u.startsWith("day"))   toDays = Math.round(q);
+        if (u.startsWith("week"))  toDays = Math.round(q * 7);
+        if (u.startsWith("month")) toDays = Math.round(q * 30);
+        if (u.startsWith("year"))  toDays = Math.round(q * 365);
+      }
+
+      console.log(`Derived to_days from name "${recurrencyInfo.name}":`, toDays);
+    }
+
+    if (!toDays) {
+      return res.status(400).json({
+        error: `Missing recurrency rule (to_days). recurrency_type_id=${recurrencyTypeId}, name="${recurrencyInfo?.name}"`,
+      });
     }
 
     const today = new Date();
     const nextEndDate = new Date();
-    nextEndDate.setDate(nextEndDate.getDate() + recurrencyInfo.to_days);
+    nextEndDate.setDate(nextEndDate.getDate() + toDays);
 
-    // ---- Aggiorna esecuzione attuale ----
+    // ── Aggiorna esecuzione attuale ───────────────────────────────────────────
     jobExecution.execution_state = mark;
-    jobExecution.ending_date = today;
-    jobExecution.execution_date = today;
+    jobExecution.ending_date     = today;
+    jobExecution.execution_date  = today;
     await jobExecution.save();
 
-    // ---- Nuova esecuzione ----
+    // ── Crea nuova esecuzione ─────────────────────────────────────────────────
     const newExecution = await JobExecution.create({
-      job_id: jobExecution.job_id,
-      status_id: jobExecution.status_id,
-      user_id: jobExecution.user_id,
-      element_eswbs_instance_id: jobExecution.element_eswbs_instance_id,
-      starting_date: formatDate(today),      // 👈 sempre oggi
-      ending_date: formatDate(nextEndDate),  // 👈 calcolato
-      data_recovery_expiration: jobExecution.data_recovery_expiration,
-      attachment_link: null,
-      recurrency_type_id: jobExecution.recurrency_type_id,
-      ship_id: jobExecution.ship_id,
-      execution_state: null,
-      pauseDate: null
+      job_id:                      jobExecution.job_id,
+      status_id:                   jobExecution.status_id,
+      user_id:                     jobExecution.user_id,
+      element_eswbs_instance_id:   jobExecution.element_eswbs_instance_id,
+      starting_date:               formatDate(today),
+      ending_date:                 formatDate(nextEndDate),
+      data_recovery_expiration:    jobExecution.data_recovery_expiration,
+      attachment_link:             null,
+      recurrency_type_id:          recurrencyTypeId,
+      ship_id:                     jobExecution.ship_id,
+      execution_state:             null,
+      pauseDate:                   null,
     });
 
     return res.status(200).json({
       message: "Maintenance marked OK. Next execution scheduled.",
-      completed: jobExecution,
-      nextExecution: newExecution
-    });
+      completed:     jobExecution,
+      nextExecution: newExecution,
+    }); 
 
   } catch (error) {
     console.error("Error updating status:", error);
