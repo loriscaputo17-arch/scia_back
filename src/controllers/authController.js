@@ -3,46 +3,40 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const SECRET_KEY = "supersecretkey";
+const { getUserPermissions } = require("../middleware/auth");
 
 exports.loginWithEmail = async (req, res) => {
   const { email, password } = req.body;
 
   try {
     const userLogin = await UserLogin.findOne({ where: { email } });
-
     if (!userLogin) {
       return res.status(401).json({ error: "Credentials are not valid." });
     }
 
     const isMatch = await bcrypt.compare(password, userLogin.password_hash);
-
     if (!isMatch) {
       return res.status(401).json({ error: "Credentials are not valid." });
     }
 
-    console.log(isMatch)
+    // ← NUOVO: carica i permessi
+    const ships = await getUserPermissions(userLogin.user_id);
 
     const token = jwt.sign(
-      { userId: userLogin.user_id, email: userLogin.email },
+      { userId: userLogin.user_id, email: userLogin.email, ships },
       process.env.SECRET_KEY,
-      { expiresIn: '2h' }
+      { expiresIn: "8h" }
     );
 
-    console.log(token)
-    
-    return res.json({
-      message: "Login successful",
-      token,
-    });
+    return res.json({ message: "Login successful", token });
   } catch (error) {
     console.error("Error during login:", error);
     res.status(500).json({ error: "Error during login" });
   }
-}; 
+};
 
 exports.loginWithPin = async (req, res) => {
   const { pin } = req.body;
-  console.log(pin)
 
   try {
     const userLogin = await UserLogin.findOne({
@@ -54,16 +48,16 @@ exports.loginWithPin = async (req, res) => {
       return res.status(401).json({ error: "PIN non valido o disabilitato." });
     }
 
+    // ← NUOVO: carica i permessi (identico al login email)
+    const ships = await getUserPermissions(userLogin.user.id);
+
     const token = jwt.sign(
-      { userId: userLogin.user.id },
+      { userId: userLogin.user.id, ships },
       process.env.SECRET_KEY,
-      { expiresIn: '2h' }
+      { expiresIn: "8h" }
     );
-    
-    return res.json({
-      message: "Login PIN effettuato",
-      token,
-    });
+
+    return res.json({ message: "Login PIN effettuato", token });
   } catch (error) {
     console.error("Errore durante il login con PIN:", error);
     res.status(500).json({ error: "Errore durante il login rapido" });

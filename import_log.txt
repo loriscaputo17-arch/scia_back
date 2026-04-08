@@ -1,0 +1,12 @@
+Import SCIADB — 2026-03-13 10:07:11.823024
+ElementModel: 598 OK / 0 saltati
+Element: 278 OK / 6 saltati
+Spare: 76 OK / 0 saltati
+
+--- ERRORI ---
+Row 788 Element LCN=528110104 serial=Non ancora installato: (1062, "Duplicate entry 'Non ancora installato' for key 'serial_number_2'")
+Row 835 Element LCN=531510102 serial=0592-136: (1062, "Duplicate entry '0592-136' for key 'serial_number_2'")
+Row 952 Element LCN=55711010A serial=0948-1: (1062, "Duplicate entry '0948-1' for key 'serial_number_2'")
+Row 1002 Element LCN=557110408 serial=0948-1: (1062, "Duplicate entry '0948-1' for key 'serial_number_2'")
+Row 1004 Element LCN=55711040A serial=0948-3: (1062, "Duplicate entry '0948-3' for key 'serial_number_2'")
+Row 1005 Element LCN=55711040B serial=0948-4: (1062, "Duplicate entry '0948-4' for key 'serial_number_2'")

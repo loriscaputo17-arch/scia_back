@@ -1,0 +1,7 @@
+Import SCIADB v3 — 2026-03-13 14:25:38.426642
+ElementModel : 1256 OK / 0 saltati
+Element      : 1540 OK / 0 saltati
+Spare        : 76 OK / 0 saltati
+Tools        : 18 OK / 0 saltati
+
+--- ERRORI ---

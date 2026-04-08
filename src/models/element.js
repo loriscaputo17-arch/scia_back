@@ -11,6 +11,7 @@ const Element = sequelize.define("Element", {
     installation_date: { type: DataTypes.DATE },
     progressive_code: { type: DataTypes.INTEGER },
     time_to_work: { type: DataTypes.STRING, },
+    lcn_type: { type: DataTypes.TEXT, },
     updated_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,

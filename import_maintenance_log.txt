@@ -1,0 +1,8 @@
+Import Maintenance — 2026-03-17 04:50:13.685730
+Maintenance: 6 OK / 0 saltati
+JobExecution creati: 6
+Consumabili nuovi: 0 | Collegati: 22
+Tools nuovi: 1 | Collegati: 8
+Spare nuovi: 0 | Collegati: 0
+
+--- ERRORI ---

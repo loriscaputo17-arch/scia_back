@@ -187,6 +187,7 @@ exports.getProfile = async (req, res) => {
     // -----------------------------------------------------
     // 📤 Risposta finale
     // -----------------------------------------------------
+    
     return res.json({
       id: user.id,
       firstName: user.first_name,

@@ -5,11 +5,13 @@ const helmet = require("helmet");
 const compression = require("compression");
 const sequelize = require("./config/db");
 const logger = require('../logger');
+  
+require("./notificationScheduler.js");
 
 logger.info('Applicazione avviata');
 logger.error('Errore di test');
 //require("./cron/notificationScheduler.js"); 
-
+ 
 const shipRoutes = require("./routes/shipRoutes");
 const summaryRoutes = require("./routes/summaryRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -49,6 +51,39 @@ const filesRoutes = require("./routes/admin/filesRoutes");
 const sparesRoutes = require("./routes/admin/sparesRoutes");
 
 const app = express();
+
+const swaggerUi = require('swagger-ui-express');
+const swaggerJsdoc = require('swagger-jsdoc');
+
+const path = require('path');
+
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'SCIA API',
+      version: '1.0.0',
+      description: 'Documentazione API automatica',
+    },
+    servers: [
+      {
+        url: 'http://localhost:4000',
+      },
+      {
+        url: 'https://scia-back.onrender.com',
+      },
+    ],
+  },
+  apis: [
+    path.join(__dirname, '/routes/*.js'),
+    path.join(__dirname, '/routes/admin/*.js'),
+  ],
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+// endpoint swagger
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 const cookieParser = require("cookie-parser");
 

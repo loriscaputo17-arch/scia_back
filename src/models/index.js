@@ -45,6 +45,15 @@ const ESWBS_Glossary = require("./ESWBS_Glossary");
 const MaintenanceGroup = require("./maintenanceGroup");
 const Threshold = require("./Threshold");
 const OrganizationCompanyNCAGE_Entity = require("./OrganizationCompanyNCAGE_Entity");
+const AppModule = require("./AppModule");
+const TeamElementAccess = require("./TeamElementAccess");
+const TeamModulePermission = require("./TeamModulePermission");
+const TeamShipAccess = require("./TeamShipAccess");
+const Consumable = require("./consumable");
+const Tool = require("./tool");
+const Maintenance_ListConsumable = require("./maintenanceListConsumable");
+const Maintenance_ListSpare = require("./maintenanceListSpare");
+const Maintenance_ListTools = require("./maintenanceListTools");
 
 /* -------------------------- RELAZIONI OWNER / SHIPYARD -------------------------- */
 Owner.belongsTo(OrganizationCompanyNCAGE, {
@@ -289,10 +298,65 @@ Shipyards.hasMany(shipModel, {
   as: "shipModels",
 });
 
+Maintenance_List.hasMany(Maintenance_ListConsumable, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_consumables",
+});
+Maintenance_ListConsumable.belongsTo(Maintenance_List, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_list",
+});
+Maintenance_ListConsumable.belongsTo(Consumable, {
+  foreignKey: "Consumable_ID",
+  as: "consumable",
+});
+Consumable.hasMany(Maintenance_ListConsumable, {
+  foreignKey: "Consumable_ID",
+  as: "list_entries",
+});
+
+Maintenance_List.hasMany(Maintenance_ListSpare, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_spares",
+});
+Maintenance_ListSpare.belongsTo(Maintenance_List, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_list",
+});
+Maintenance_ListSpare.belongsTo(Spare, {
+  foreignKey: "Spare_ID",
+  as: "spare",
+});
+Spare.hasMany(Maintenance_ListSpare, {
+  foreignKey: "Spare_ID",
+  as: "maintenance_entries",
+});
+
+Maintenance_List.hasMany(Maintenance_ListTools, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_tools",
+});
+Maintenance_ListTools.belongsTo(Maintenance_List, {
+  foreignKey: "Maintenance_List_ID",
+  as: "maintenance_list",
+});
+Maintenance_ListTools.belongsTo(Tool, {
+  foreignKey: "Tool_ID",
+  as: "tool",
+});
+Tool.hasMany(Maintenance_ListTools, {
+  foreignKey: "Tool_ID",
+  as: "maintenance_entries",
+});
 
 /* -------------------------- RELAZIONI FINALI -------------------------- */
 const db = {
   sequelize,
+  Consumable,
+  Tool,
+  Maintenance_ListConsumable,
+  Maintenance_ListSpare,
+  Maintenance_ListTools,
   Job,
   Element,
   Ship,
@@ -336,7 +400,11 @@ const db = {
   ESWBS_Glossary,
   MaintenanceGroup,
   Threshold,
-  OrganizationCompanyNCAGE_Entity
+  OrganizationCompanyNCAGE_Entity,
+  AppModule,
+  TeamElementAccess,
+  TeamModulePermission,
+  TeamShipAccess
 };
 
 module.exports = db;

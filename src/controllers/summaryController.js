@@ -24,10 +24,6 @@ exports.getSummary = async (req, res) => {
       return res.status(400).json({ error: "Missing ship_id or user_id" });
     }
 
-    // ==================================================
-    // 1️⃣ COUNTERS
-    // ==================================================
-
     const [
       maintenanceCount,
       checklistCount,
@@ -53,7 +49,7 @@ exports.getSummary = async (req, res) => {
       Readings.count({ where: { ship_id } }),
       Spare.count({ where: { ship_id } }),
       Failures.count({ where: { ship_id } }),
-      ShipFiles.count({ where: { ship_id, user_id } })
+      ShipFiles.count({ where: { ship_id } })
     ]);
 
     // ==================================================
