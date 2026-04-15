@@ -336,13 +336,28 @@ exports.getElements = async (req, res) => {
       where: {
         ship_id: ship.id,
         element_model_id: { [Op.ne]: null },
-        ...(lcnTypes?.length ? { lcn_type: { [Op.in]: lcnTypes } } : {})
       },
       include: [
         {
-          model: ElemetModel,
+          model: ElemetModel, // ✅ fix typo
           as: "element_model",
-          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID"],
+          attributes: [
+            "id",
+            "parent_element_model_id",
+            "ESWBS_code",
+            "LCNtype_ID",
+          ],
+          where: {
+            ...(lcnTypes?.length && {
+              LCNtype_ID: { [Op.in]: lcnTypes },
+            }),
+
+            // 🔥 filtro ESWBS (NO finali con 0)
+            ESWBS_code: {
+              [Op.notLike]: "%0",
+            },
+          },
+          required: true,
         },
       ],
     });
@@ -350,30 +365,29 @@ exports.getElements = async (req, res) => {
     if (!flatElements.length)
       return res.status(404).json({ error: "No elements found" });
 
-    // ⭐ Mappa id Element → nodo
     const map = {};
-    flatElements.forEach(el => {
+    flatElements.forEach((el) => {
       map[el.id] = {
         id: el.id.toString(),
         name: el.name,
         code: el.serial_number,
-        LCNtype_ID: el.element_model.LCNtype_ID,
-        eswbs_code: el.element_model.ESWBS_code,
-        element_model_id: el.element_model.id,                          // ⭐ aggiunto
-        parent_element_model_id: el.element_model.parent_element_model_id,
-        children: []
+        LCNtype_ID: el.element_model?.LCNtype_ID,
+        eswbs_code: el.element_model?.ESWBS_code,
+        element_model_id: el.element_model?.id,
+        parent_element_model_id:
+          el.element_model?.parent_element_model_id,
+        children: [],
       };
     });
 
-    // ⭐ Mappa element_model_id → nodo (per collegare parent_element_model_id)
     const modelIdMap = {};
-    flatElements.forEach(el => {
-      modelIdMap[el.element_model.id] = map[el.id];
+    flatElements.forEach((el) => {
+      if (el.element_model)
+        modelIdMap[el.element_model.id] = map[el.id];
     });
 
-    // ⭐ Costruisce albero usando parent_element_model_id
     const tree = [];
-    Object.values(map).forEach(node => {
+    Object.values(map).forEach((node) => {
       const parentNode = modelIdMap[node.parent_element_model_id];
       if (parentNode && parentNode.id !== node.id) {
         parentNode.children.push(node);
@@ -382,10 +396,11 @@ exports.getElements = async (req, res) => {
       }
     });
 
-    return res.status(200).json(tree); // ⭐ restituisce albero, non lista piatta
-
+    return res.status(200).json(tree);
   } catch (error) {
     console.error("Error retrieving elements:", error);
-    return res.status(500).json({ error: "Server error while retrieving elements" });
+    return res.status(500).json({
+      error: "Server error while retrieving elements",
+    });
   }
 };
