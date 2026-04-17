@@ -1,5 +1,6 @@
+// ─── IMPORTS ────────────────────────────────────────────────────────────────
 const { Organizations } = require("aws-sdk");
-const { Element, ElemetModel, Ship, Spare, JobExecution, 
+const { Element, ElemetModel, Ship, Spare, JobExecution,
   VocalNote, TextNote, PhotographicNote, Parts, OrganizationCompanyNCAGE, User,
   Maintenance_List, maintenanceLevel, recurrencyType,
   JobStatus, Failures, Readings, ReadingsType, Scans, ShipFiles } = require("../models");
@@ -7,7 +8,9 @@ const { Element, ElemetModel, Ship, Spare, JobExecution,
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Op, Sequelize } = require("sequelize");
+const ExcelJS = require("exceljs"); // ✅ spostato in cima con gli altri require
 
+// ─── S3 ──────────────────────────────────────────────────────────────────────
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
   credentials: {
@@ -28,6 +31,55 @@ const extractS3Key = (url) => {
   }
 };
 
+// ─── HELPER PRIVATO: split descrizione in ≤4 campi da max 25 caratteri ──────
+function splitDescription(name, maxChars = 25, maxFields = 4) {
+  if (!name) return ["", "", "", ""];
+
+  const words = name.trim().toUpperCase().split(/\s+/);
+  const fields = [];
+  let current = "";
+
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (test.length <= maxChars) {
+      current = test;
+    } else {
+      if (current) fields.push(current);
+      if (fields.length === maxFields) break;
+      current = word;
+    }
+  }
+
+  if (current && fields.length < maxFields) fields.push(current);
+
+  const usedWordCount = fields.reduce((acc, f) => acc + f.split(/\s+/).length, 0);
+  const remainingWords = words.slice(usedWordCount);
+
+  if (remainingWords.length > 0 && fields.length === maxFields) {
+    let last = fields[fields.length - 1];
+    for (const w of remainingWords) {
+      const attempt = `${last} ${w}`;
+      if (attempt.length <= maxChars - 1) {
+        last = attempt;
+      } else {
+        const available = maxChars - 1 - last.length - 1;
+        if (available > 0) {
+          last = `${last} ${w.slice(0, available)}-`;
+        } else {
+          last = `${last.slice(0, maxChars - 1)}-`;
+        }
+        break;
+      }
+    }
+    fields[fields.length - 1] = last;
+  }
+
+  while (fields.length < maxFields) fields.push("");
+  return fields.slice(0, maxFields);
+}
+
+// ─── CONTROLLERS ─────────────────────────────────────────────────────────────
+
 exports.getElement = async (req, res) => {
   try {
     const { element, ship_id } = req.body;
@@ -36,7 +88,6 @@ exports.getElement = async (req, res) => {
       return res.status(400).json({ error: "Missing element or ship_id in request body" });
     }
 
-    // 1️⃣ Trova l'elemento
     const elementData = await Element.findOne({
       where: { id: element, ship_id },
       raw: true,
@@ -44,7 +95,6 @@ exports.getElement = async (req, res) => {
 
     if (!elementData) return res.status(404).json({ error: "Element not found" });
 
-    // 2️⃣ ElementModel
     const elementModel = await ElemetModel.findOne({
       where: { id: elementData.element_model_id },
       raw: true,
@@ -52,7 +102,6 @@ exports.getElement = async (req, res) => {
 
     if (!elementModel) return res.status(404).json({ error: "Element model not found" });
 
-    // 3️⃣ Elementi figli (stesso parent_element_model_id = elementModel.id)
     const childModels = await ElemetModel.findAll({
       where: { parent_element_model_id: elementModel.id },
       raw: true,
@@ -62,15 +111,11 @@ exports.getElement = async (req, res) => {
 
     const childElements = childModelIds.length
       ? await Element.findAll({
-          where: {
-            element_model_id: { [Op.in]: childModelIds },
-            ship_id,
-          },
+          where: { element_model_id: { [Op.in]: childModelIds }, ship_id },
           raw: true,
         })
       : [];
 
-    // 4️⃣ Elemento padre
     let parentElement = null;
     let parentModel = null;
     if (elementModel.parent_element_model_id && elementModel.parent_element_model_id !== 0) {
@@ -86,7 +131,6 @@ exports.getElement = async (req, res) => {
       }
     }
 
-    // 5️⃣ Ricambi collegati al modello
     const spares = await Spare.findAll({
       where: { element_model_id: elementModel.id },
       include: [
@@ -98,7 +142,6 @@ exports.getElement = async (req, res) => {
       ],
     });
 
-    // 6️⃣ Manutenzioni collegate
     const maintenances = await Maintenance_List.findAll({
       where: {
         id_ship: ship_id,
@@ -114,7 +157,6 @@ exports.getElement = async (req, res) => {
       ],
     });
 
-    // 7️⃣ Job executions collegati all'elemento
     const jobExecutions = await JobExecution.findAll({
       where: { element_eswbs_instance_id: elementData.id },
       include: [
@@ -127,7 +169,6 @@ exports.getElement = async (req, res) => {
 
     const jobExecutionIds = jobExecutions.map(job => job.id);
 
-    // 8️⃣ Note
     const [vocalNotesRaw, textNotesRaw, photographyNotesRaw] = await Promise.all([
       VocalNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
       TextNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
@@ -162,13 +203,8 @@ exports.getElement = async (req, res) => {
       })
     );
 
-    // 9️⃣ Failures collegati all'elemento
-    const failures = await Failures.findAll({
-      where: { ship_id },
-      raw: true,
-    });
+    const failures = await Failures.findAll({ where: { ship_id }, raw: true });
 
-    // 🔟 Readings collegati all'elemento
     const readings = await Readings.findAll({
       where: { element_id: elementData.id },
       include: [{ model: ReadingsType, as: "type" }],
@@ -176,7 +212,6 @@ exports.getElement = async (req, res) => {
       limit: 50,
     });
 
-    // 1️⃣1️⃣ Scansioni
     const scans = await Scans.findAll({
       where: { element_id: elementData.id },
       order: [["scanned_at", "DESC"]],
@@ -184,7 +219,6 @@ exports.getElement = async (req, res) => {
       raw: true,
     });
 
-    // 1️⃣2️⃣ Parts + Organization del produttore
     const parts_manufacturer = elementModel.Manufacturer_ID
       ? await Parts.findOne({
           where: { ID: elementModel.Manufacturer_ID },
@@ -192,7 +226,6 @@ exports.getElement = async (req, res) => {
         })
       : null;
 
-    // 1️⃣3️⃣ Supplier
     const supplier = elementModel.Supplier_ID
       ? await OrganizationCompanyNCAGE.findOne({
           where: { ID: elementModel.Supplier_ID },
@@ -200,13 +233,8 @@ exports.getElement = async (req, res) => {
         })
       : null;
 
-    // 1️⃣4️⃣ Ship files collegati alla ship
-    const shipFiles = await ShipFiles.findAll({
-      where: { ship_id },
-      raw: true,
-    });
+    const shipFiles = await ShipFiles.findAll({ where: { ship_id }, raw: true });
 
-    // 1️⃣5️⃣ Autori note
     const authorIds = [
       ...new Set([
         ...vocalNotesRaw.map(n => n.author),
@@ -226,49 +254,25 @@ exports.getElement = async (req, res) => {
     const authorMap = {};
     authors.forEach(a => { authorMap[a.id] = a; });
 
-    // Arricchisci note con autori
-    const enrichNote = (note) => ({
-      ...note,
-      authorDetails: authorMap[note.author] || null,
-    });
+    const enrichNote = (note) => ({ ...note, authorDetails: authorMap[note.author] || null });
 
     return res.status(200).json({
       element: elementData,
       model: elementModel,
-
-      // Gerarchia
       parent: parentElement ? { element: parentElement, model: parentModel } : null,
       children: childElements.map(ce => ({
         element: ce,
         model: childModels.find(m => m.id === ce.element_model_id) || null,
       })),
-
-      // Ricambi
       spares: spares.map(s => s.toJSON()),
-
-      // Manutenzioni
       maintenances: maintenances.map(m => m.toJSON()),
-
-      // Job executions recenti
       jobExecutions: jobExecutions.map(j => j.toJSON()),
-
-      // Readings
       readings: readings.map(r => r.toJSON()),
-
-      // Scansioni
       scans,
-
-      // Failures
       failures,
-
-      // Files nave
       shipFiles,
-
-      // Produttore / Fornitore
       manufacturer: parts_manufacturer ? parts_manufacturer.toJSON() : null,
       supplier,
-
-      // Note
       notes: {
         vocal: vocalNotes.map(enrichNote),
         text: textNotesRaw.map(enrichNote),
@@ -284,17 +288,12 @@ exports.getElement = async (req, res) => {
 
 exports.addElementTimeWork = async (req, res) => {
   const { id, time } = req.body;
-
   try {
     const element = await Element.findByPk(id);
-    if (!element) {
-      return res.status(404).json({ error: "Element not found" });
-    }
-
-    element.time_to_work = time; 
-    element.updated_at = new Date(); 
+    if (!element) return res.status(404).json({ error: "Element not found" });
+    element.time_to_work = time;
+    element.updated_at = new Date();
     await element.save();
-
     res.status(200).json({ message: "Element timeWork updated", element });
   } catch (error) {
     console.error("Error updating element timeWork:", error);
@@ -302,18 +301,11 @@ exports.addElementTimeWork = async (req, res) => {
   }
 };
 
-
 exports.updateElement = async (req, res) => {
   const { id } = req.params;
   try {
-    const [updatedRows] = await Element.update(req.body, {
-      where: { id },
-    });
-
-    if (updatedRows === 0) {
-      return res.status(404).json({ error: "Element not found" });
-    }
-
+    const [updatedRows] = await Element.update(req.body, { where: { id } });
+    if (updatedRows === 0) return res.status(404).json({ error: "Element not found" });
     res.json({ message: "Element successfully updated" });
   } catch (error) {
     console.error("Error updating element:", error);
@@ -339,31 +331,19 @@ exports.getElements = async (req, res) => {
       },
       include: [
         {
-          model: ElemetModel, // ✅ fix typo
+          model: ElemetModel,
           as: "element_model",
-          attributes: [
-            "id",
-            "parent_element_model_id",
-            "ESWBS_code",
-            "LCNtype_ID",
-          ],
+          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID"],
           where: {
-            ...(lcnTypes?.length && {
-              LCNtype_ID: { [Op.in]: lcnTypes },
-            }),
-
-            // 🔥 filtro ESWBS (NO finali con 0)
-            ESWBS_code: {
-              [Op.notLike]: "%0",
-            },
+            ...(lcnTypes?.length && { LCNtype_ID: { [Op.in]: lcnTypes } }),
+            ESWBS_code: { [Op.notLike]: "%0" },
           },
           required: true,
         },
       ],
     });
 
-    if (!flatElements.length)
-      return res.status(404).json({ error: "No elements found" });
+    if (!flatElements.length) return res.status(404).json({ error: "No elements found" });
 
     const map = {};
     flatElements.forEach((el) => {
@@ -374,16 +354,14 @@ exports.getElements = async (req, res) => {
         LCNtype_ID: el.element_model?.LCNtype_ID,
         eswbs_code: el.element_model?.ESWBS_code,
         element_model_id: el.element_model?.id,
-        parent_element_model_id:
-          el.element_model?.parent_element_model_id,
+        parent_element_model_id: el.element_model?.parent_element_model_id,
         children: [],
       };
     });
 
     const modelIdMap = {};
     flatElements.forEach((el) => {
-      if (el.element_model)
-        modelIdMap[el.element_model.id] = map[el.id];
+      if (el.element_model) modelIdMap[el.element_model.id] = map[el.id];
     });
 
     const tree = [];
@@ -399,8 +377,95 @@ exports.getElements = async (req, res) => {
     return res.status(200).json(tree);
   } catch (error) {
     console.error("Error retrieving elements:", error);
-    return res.status(500).json({
-      error: "Server error while retrieving elements",
+    return res.status(500).json({ error: "Server error while retrieving elements" });
+  }
+};
+
+// ─── POST /api/elements/:ship_model_id/dymo-export ───────────────────────────
+// Body: { teamId?, lcnTypes?, elementIds? }
+//   elementIds fornito → esporta solo quelli; omesso → tutti gli elementi della nave
+exports.exportDymoExcel = async (req, res) => {
+  const { ship_model_id } = req.params;
+  const { teamId, lcnTypes, elementIds } = req.body;
+  const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://scia-frontend.vercel.app";
+
+  try {
+    const shipWhere = { id: ship_model_id };
+    if (teamId) shipWhere.team = teamId;
+
+    const ship = await Ship.findOne({ where: shipWhere });
+    if (!ship) return res.status(404).json({ error: "Ship not found" });
+
+    const elementWhere = {
+      ship_id: ship.id,
+      element_model_id: { [Op.ne]: null },
+    };
+    if (elementIds?.length) elementWhere.id = { [Op.in]: elementIds };
+
+    const elements = await Element.findAll({
+      where: elementWhere,
+      include: [
+        {
+          model: ElemetModel,
+          as: "element_model",
+          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID"],
+          where: {
+            ...(lcnTypes?.length && { LCNtype_ID: { [Op.in]: lcnTypes } }),
+            ESWBS_code: { [Op.notLike]: "%0" },
+          },
+          required: true,
+        },
+      ],
+      order: [[{ model: ElemetModel, as: "element_model" }, "ESWBS_code", "ASC"]],
     });
+
+    if (!elements.length) return res.status(404).json({ error: "No elements found" });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "SCIA";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet("Foglio1");
+    sheet.columns = [
+      { header: "ESWBS",        key: "eswbs",  width: 13 },
+      { header: "QR-CODE URL",  key: "url",    width: 55.5 },
+      { header: "CODE",         key: "code",   width: 13 },
+      { header: "DESCRIPTION1", key: "desc1",  width: 28.25 },
+      { header: "DESCRIPTION2", key: "desc2",  width: 28.25 },
+      { header: "DESCRIPTION3", key: "desc3",  width: 28.25 },
+      { header: "DESCRIPTION4", key: "desc4",  width: 28.25 },
+    ];
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { name: "Arial", bold: true, size: 10 };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } };
+    headerRow.alignment = { vertical: "middle", horizontal: "center" };
+    headerRow.height = 18;
+
+    for (const el of elements) {
+      const [d1, d2, d3, d4] = splitDescription(el.name);
+      const row = sheet.addRow({
+        eswbs: el.element_model?.ESWBS_code || "",
+        url:   `${BASE_APP_URL}/dashboard/impianti/${el.id}`,
+        code:  el.serial_number || "",
+        desc1: d1, desc2: d2, desc3: d3, desc4: d4,
+      });
+      row.font = { name: "Arial", size: 10 };
+      row.height = 15;
+    }
+
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 7 } };
+
+    const filename = `dymo_import_nave${ship_model_id}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (error) {
+    console.error("Error generating DYMO Excel:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };

@@ -353,4 +353,6 @@ router.post("/getElements/:ship_model_id/:user_id", elementController.getElement
  */
 router.post("/getElement", elementController.getElement);
 
+router.post("/:ship_model_id/dymo-export", elementController.exportDymoExcel);
+
 module.exports = router;
