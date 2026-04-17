@@ -328,6 +328,7 @@ exports.getElements = async (req, res) => {
       where: {
         ship_id: ship.id,
         element_model_id: { [Op.ne]: null },
+        id: { [Op.gte]: 3377 }, // ← esclude i contenitori padre
       },
       include: [
         {
