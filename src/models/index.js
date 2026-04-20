@@ -74,6 +74,12 @@ OrganizationCompanyNCAGE.hasMany(Shipyards, {
   as: "shipyards",
 });
 
+// TeamShipAccess ↔ Team
+TeamShipAccess.belongsTo(Team, { foreignKey: "team_id", as: "accessTeam" });
+Team.hasMany(TeamShipAccess, { foreignKey: "team_id", as: "shipAccesses" });
+
+// TeamMember ↔ User (già hai TeamMember ↔ User ma verifica l'alias)
+TeamMember.belongsTo(User, { foreignKey: "user_id", as: "memberUser" });
 
 /* -------------------------- RELAZIONI USER / TEAM -------------------------- */
 User.belongsTo(Team, { as: "userTeam", foreignKey: "team_id" });

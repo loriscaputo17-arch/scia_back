@@ -1,4 +1,4 @@
-const { UserLogin, User } = require("../models");
+const { UserLogin, User, TeamShipAccess, Team, TeamMember } = require("../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
@@ -14,21 +14,18 @@ exports.loginWithEmail = async (req, res) => {
       return res.status(401).json({ error: "Credentials are not valid." });
     }
 
+    console.log(password)
+
     const isMatch = await bcrypt.compare(password, userLogin.password_hash);
     if (!isMatch) {
       return res.status(401).json({ error: "Credentials are not valid." });
     }
 
-    // ← NUOVO: carica i permessi
+    // Carica le navi accessibili all'account (lista condivisa, non utente specifico)
     const ships = await getUserPermissions(userLogin.user_id);
 
-    const token = jwt.sign(
-      { userId: userLogin.user_id, email: userLogin.email, ships },
-      process.env.SECRET_KEY,
-      { expiresIn: "8h" }
-    );
-
-    return res.json({ message: "Login successful", token });
+    // Nessun token: il frontend salva le navi e aspetta il PIN
+    return res.json({ ships });
   } catch (error) {
     console.error("Error during login:", error);
     res.status(500).json({ error: "Error during login" });
@@ -36,9 +33,14 @@ exports.loginWithEmail = async (req, res) => {
 };
 
 exports.loginWithPin = async (req, res) => {
-  const { pin } = req.body;
+  const { pin, shipId } = req.body;
+
+  if (!pin || !shipId) {
+    return res.status(400).json({ error: "PIN e shipId sono obbligatori." });
+  }
 
   try {
+    // 1. Trova l'utente dal PIN (il PIN è personale, non globale)
     const userLogin = await UserLogin.findOne({
       where: { pin, pin_enabled: true },
       include: { model: User, as: "user" },
@@ -48,11 +50,49 @@ exports.loginWithPin = async (req, res) => {
       return res.status(401).json({ error: "PIN non valido o disabilitato." });
     }
 
-    // ← NUOVO: carica i permessi (identico al login email)
-    const ships = await getUserPermissions(userLogin.user.id);
+    const userId = userLogin.user.id;
 
+    // 2. Verifica che l'utente abbia accesso alla nave richiesta
+    //    TeamShipAccess → Team → TeamMembers → User
+    const hasAccess = await TeamShipAccess.findOne({
+      where: { ship_id: shipId },
+      include: {
+        model: Team,
+        as: "Team",          // deve corrispondere all'alias definito sopra
+        required: true,
+        include: {
+          model: TeamMember,
+          as: "teamTeamMembers",   // alias già definito nel tuo index.js
+          where: { user_id: userId },
+          required: true,
+        },
+      },
+    });
+
+    if (!hasAccess) {
+      return res
+        .status(403)
+        .json({ error: "Utente non autorizzato per questa nave." });
+    }
+
+    // 3. Carica i permessi dell'utente, filtrati sulla nave specifica
+    const ships = await getUserPermissions(userId);
+    const shipPermissions = ships.find((s) => s.shipId === Number(shipId));
+
+    if (!shipPermissions) {
+      return res
+        .status(403)
+        .json({ error: "Nessun permesso trovato per questa nave." });
+    }
+
+    // 4. Emetti il token con contesto completo
     const token = jwt.sign(
-      { userId: userLogin.user.id, ships },
+      {
+        userId,
+        shipId: Number(shipId),
+        // Moduli accessibili su questa nave specifica
+        modules: shipPermissions.modules,
+      },
       process.env.SECRET_KEY,
       { expiresIn: "8h" }
     );
