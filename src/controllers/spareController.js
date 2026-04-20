@@ -1,6 +1,6 @@
 const { Spare, Location, Warehouses, maintenanceListSpareAdded, 
   ElemetModel, Parts, OrganizationCompanyNCAGE,
- Maintenance_ListSpare, Maintenance_List, Element } = require("../models");
+ Maintenance_ListSpare, Maintenance_List, Element, maintenanceLevel, recurrencyType  } = require("../models");
 const { Op } = require("sequelize");
 
 require('dotenv').config();
@@ -13,7 +13,7 @@ const multer = require('multer');
 
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-
+ 
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -95,7 +95,7 @@ exports.getSpare = async (req, res) => {
             'Mean_elapsed_time_MELAP',
             'Personnel_no',
             'Service_or_Maintenance_Manual_Link',
-            'Service_or_Maintenance_manual_ParagraphAndPage',
+            'Service_or_Maintenance_manual_ParagraphPage',
           ],
           include: [
             { model: maintenanceLevel, as: "maintenance_level" },

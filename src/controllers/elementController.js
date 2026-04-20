@@ -1,4 +1,3 @@
-// ─── IMPORTS ────────────────────────────────────────────────────────────────
 const { Organizations } = require("aws-sdk");
 const { Element, ElemetModel, Ship, Spare, JobExecution,
   VocalNote, TextNote, PhotographicNote, Parts, OrganizationCompanyNCAGE, User,
@@ -8,9 +7,8 @@ const { Element, ElemetModel, Ship, Spare, JobExecution,
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Op, Sequelize } = require("sequelize");
-const ExcelJS = require("exceljs"); // ✅ spostato in cima con gli altri require
+const ExcelJS = require("exceljs"); 
 
-// ─── S3 ──────────────────────────────────────────────────────────────────────
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
   credentials: {
@@ -314,6 +312,75 @@ exports.updateElement = async (req, res) => {
 };
 
 exports.getElements = async (req, res) => {
+  const { ship_model_id } = req.params;
+  const { teamId, lcnTypes } = req.body;
+
+  try {
+    const shipWhere = { id: ship_model_id };
+    if (teamId) shipWhere.team = teamId;
+
+    const ship = await Ship.findOne({ where: shipWhere });
+    if (!ship) return res.status(404).json({ error: "Ship not found" });
+
+    const flatElements = await Element.findAll({
+      where: {
+        ship_id: ship.id,
+        element_model_id: { [Op.ne]: null },
+        //id: { [Op.gte]: 3377 }, // ← esclude i contenitori padre
+      },
+      include: [
+        {
+          model: ElemetModel,
+          as: "element_model",
+          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID"],
+          where: {
+            ...(lcnTypes?.length && { LCNtype_ID: { [Op.in]: lcnTypes } }),
+            //ESWBS_code: { [Op.notLike]: "%0" },
+          },
+          required: true,
+        },
+      ],
+    });
+
+    if (!flatElements.length) return res.status(404).json({ error: "No elements found" });
+
+    const map = {};
+    flatElements.forEach((el) => {
+      map[el.id] = {
+        id: el.id.toString(),
+        name: el.name,
+        code: el.serial_number,
+        LCNtype_ID: el.element_model?.LCNtype_ID,
+        eswbs_code: el.element_model?.ESWBS_code,
+        element_model_id: el.element_model?.id,
+        parent_element_model_id: el.element_model?.parent_element_model_id,
+        children: [],
+      };
+    });
+
+    const modelIdMap = {};
+    flatElements.forEach((el) => {
+      if (el.element_model) modelIdMap[el.element_model.id] = map[el.id];
+    });
+
+    const tree = [];
+    Object.values(map).forEach((node) => {
+      const parentNode = modelIdMap[node.parent_element_model_id];
+      if (parentNode && parentNode.id !== node.id) {
+        parentNode.children.push(node);
+      } else {
+        tree.push(node);
+      }
+    });
+
+    return res.status(200).json(tree);
+  } catch (error) {
+    console.error("Error retrieving elements:", error);
+    return res.status(500).json({ error: "Server error while retrieving elements" });
+  }
+};
+
+exports.getElementsToPrint = async (req, res) => {
   const { ship_model_id } = req.params;
   const { teamId, lcnTypes } = req.body;
 

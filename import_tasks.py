@@ -320,7 +320,7 @@ MAINT_SQL = """
         RecurrencyType_ID, MaintenanceLevel_ID,
         Maintenance_type_id,
         Service_or_Maintenance_Manual_Link,
-        `Service_or_Maintenance_manual_Paragraph&Page`,
+        `Service_or_Maintenance_manual_ParagraphPage`,
         Check_List,
         Maintenance_under_condition_description,
         Note

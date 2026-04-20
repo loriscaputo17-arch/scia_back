@@ -41,6 +41,11 @@ const upload = multer({ storage: storage });
 exports.getJobs = async (req, res) => {
   try {
     const { type_id, page = 1, limit = 30, stato, ricorrenza, livello, ricambi, element_id, eswbs_code, days_from, days_to } = req.query;
+    
+    if (Array.isArray(eswbs_code)) {
+      eswbs_code = eswbs_code[0];
+    }
+    
     const ship_id = req.shipAccess?.shipId;
 
     if (!ship_id) return res.status(400).json({ error: "Missing ship_id" });

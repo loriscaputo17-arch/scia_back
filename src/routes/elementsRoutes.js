@@ -198,6 +198,85 @@ router.get("/updateElement/:elementId", elementController.updateElement);
  */
 router.post("/getElements/:ship_model_id/:user_id", elementController.getElements);
 
+
+/**
+ * @swagger
+ * /api/element/getElements/{ship_model_id}/{user_id}:
+ *   post:
+ *     summary: Recupera gli elementi di una nave in struttura ad albero
+ *     description: >
+ *       Restituisce gli elementi della nave specificata organizzati in un albero gerarchico
+ *       basato su parent_element_model_id. Filtrabile per teamId e lcnTypes nel body.
+ *     tags: [Elements]
+ *     parameters:
+ *       - in: path
+ *         name: ship_model_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         example: 1
+ *         description: ID del modello nave (usato per trovare la Ship)
+ *       - in: path
+ *         name: user_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         example: 5
+ *         description: ID utente
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               teamId:
+ *                 type: integer
+ *                 example: 2
+ *                 description: Filtra la nave per team (opzionale)
+ *               lcnTypes:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 example: ["type1", "type2"]
+ *                 description: Filtra gli elementi per lcn_type (opzionale)
+ *     responses:
+ *       200:
+ *         description: Albero elementi recuperato con successo
+ *         content:
+ *           application/json:
+ *             example:
+ *               - id: "1"
+ *                 name: "Sistema Propulsione"
+ *                 code: "SN-001"
+ *                 LCNtype_ID: 1
+ *                 eswbs_code: "ESW-001"
+ *                 element_model_id: 10
+ *                 parent_element_model_id: null
+ *                 children:
+ *                   - id: "3"
+ *                     name: "Motore Principale"
+ *                     code: "SN-003"
+ *                     LCNtype_ID: 2
+ *                     eswbs_code: "ESW-003"
+ *                     element_model_id: 12
+ *                     parent_element_model_id: 10
+ *                     children: []
+ *       404:
+ *         description: Nave o elementi non trovati
+ *         content:
+ *           application/json:
+ *             example:
+ *               error: "No elements found"
+ *       500:
+ *         description: Errore server
+ *         content:
+ *           application/json:
+ *             example:
+ *               error: "Server error while retrieving elements"
+ */
+router.post("/getElementsToPrint/:ship_model_id/:user_id", elementController.getElementsToPrint);
+
 /**
  * @swagger
  * /api/element/getElement:

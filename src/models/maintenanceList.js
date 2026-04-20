@@ -37,9 +37,9 @@ const Maintenance_List = sequelize.define('Maintenance', {
   RecurrencyType_ID: DataTypes.INTEGER,
   MaintenanceLevel_ID: DataTypes.INTEGER,
   Service_or_Maintenance_Manual_Link: DataTypes.STRING(100),
-  Service_or_Maintenance_manual_ParagraphAndPage: {
+  Service_or_Maintenance_manual_ParagraphPage: {
     type: DataTypes.STRING(100),
-    field: 'Service_or_Maintenance_manual_Paragraph&Page'
+    field: 'Service_or_Maintenance_manual_ParagraphPage'
   },
   Check_List: DataTypes.STRING(100),
   Maintenance_procedure_details: DataTypes.STRING(100),
