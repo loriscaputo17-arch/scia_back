@@ -363,14 +363,46 @@ exports.getElements = async (req, res) => {
       if (el.element_model) modelIdMap[el.element_model.id] = map[el.id];
     });
 
-    const tree = [];
+    // PASS 1 — annidamento nativo via parent_element_model_id (EI→UI→LRU)
+    const roots = [];
     Object.values(map).forEach((node) => {
       const parentNode = modelIdMap[node.parent_element_model_id];
       if (parentNode && parentNode.id !== node.id) {
         parentNode.children.push(node);
       } else {
-        tree.push(node);
+        roots.push(node); // i nodi strutturali (EI con parent 0) finiscono qui
       }
+    });
+
+    // PASS 2 — ricostruisci la gerarchia ESWBS tra i nodi radice
+    // regola: il padre è il codice con la cifra più a destra non-zero azzerata
+    //         19911 → 19910 → 19900 → 19000 → 10000 → radice
+    const eswbsToNode = {};
+    roots.forEach((n) => { if (n.eswbs_code) eswbsToNode[n.eswbs_code] = n; });
+
+    const eswbsParentCode = (code) => {
+      if (!code || !/^\d+$/.test(code)) return null; // solo codici numerici
+      const d = code.split("");
+      for (let i = d.length - 1; i >= 0; i--) {
+        if (d[i] !== "0") { d[i] = "0"; return d.join(""); }
+      }
+      return null; // tutto zeri → nessun padre
+    };
+
+    const findEswbsParent = (code) => {
+      let c = eswbsParentCode(code);
+      while (c) {                      // risale saltando eventuali buchi
+        if (eswbsToNode[c]) return eswbsToNode[c];
+        c = eswbsParentCode(c);
+      }
+      return null;
+    };
+
+    const tree = [];
+    roots.forEach((node) => {
+      const parent = findEswbsParent(node.eswbs_code);
+      if (parent && parent.id !== node.id) parent.children.push(node);
+      else tree.push(node);
     });
 
     return res.status(200).json(tree);

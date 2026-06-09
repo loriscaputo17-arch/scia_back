@@ -49,3 +49,7 @@ Thumbs.db
 .vercel
 .env
 .env
+
+sa-key.json
+
+scia_files/
