@@ -86,10 +86,21 @@ exports.getElement = async (req, res) => {
       return res.status(400).json({ error: "Missing element or ship_id in request body" });
     }
 
-    const elementData = await Element.findOne({
+    const LEGACY_MAX_ID = 3660;   // soglia: ID < di questo = "vecchio"
+    const LEGACY_OFFSET = 2207;   // scarto vecchio→nuovo
+
+    let elementData = await Element.findOne({
       where: { id: element, ship_id },
       raw: true,
     });
+
+    // 🔁 fallback per i QR stampati prima della bonifica
+    if (!elementData && Number(element) < LEGACY_MAX_ID) {
+      elementData = await Element.findOne({
+        where: { id: Number(element) + LEGACY_OFFSET, ship_id },
+        raw: true,
+      });
+    }
 
     if (!elementData) return res.status(404).json({ error: "Element not found" });
 
@@ -358,7 +369,7 @@ exports.getElements = async (req, res) => {
       ],
     });
 
-    if (!flatElements.length) return res.status(404).json({ error: "No elements found" });
+    if (!flatElements.length) return res.status(200).json([]);
 
     const map = {};
     flatElements.forEach((el) => {
