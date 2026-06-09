@@ -140,32 +140,48 @@ exports.getElement = async (req, res) => {
       ],
     });
 
-    const maintenances = await Maintenance_List.findAll({
-      where: {
-        id_ship: ship_id,
-        [Op.or]: [
-          { End_Item_ElementModel_ID: elementModel.id },
-          { Maintenance_Item_ElementModel_ID: elementModel.id },
-          { System_ElementModel_ID: elementModel.id },
-        ],
-      },
-      include: [
-        { model: maintenanceLevel, as: "maintenance_level" },
-        { model: recurrencyType, as: "recurrency_type" },
-      ],
-    });
-
-    const jobExecutions = await JobExecution.findAll({
+    // tutte le manutenzioni dell'elemento via JobExecution (link reale: element_eswbs_instance_id)
+    const elementJobs = await JobExecution.findAll({
       where: { element_eswbs_instance_id: elementData.id },
       include: [
         { model: JobStatus, as: "status" },
         { model: recurrencyType, as: "recurrency_type" },
+        {
+          model: Maintenance_List,
+          as: "maintenance_list",
+          include: [
+            { model: maintenanceLevel, as: "maintenance_level" },
+            { model: recurrencyType, as: "recurrency_type" },
+          ],
+        },
       ],
       order: [["ending_date", "DESC"]],
-      limit: 20,
     });
 
-    const jobExecutionIds = jobExecutions.map(job => job.id);
+    // Lista tab "Manutenzioni": id = JobExecution id → è il taskId che vuole /dashboard/maintenance/[id]
+    const maintenances = elementJobs.map((je) => {
+      const ml = je.maintenance_list;
+      return {
+        id: je.id,                                              // ← l'id giusto per la navigazione
+        name: ml?.name || "—",
+        recurrency_type: ml?.recurrency_type || je.recurrency_type || null,
+        maintenance_level: ml?.maintenance_level || null,
+        Operational_Not_operational: ml?.Operational_Not_operational ?? null,
+        execution_state: je.execution_state,
+        status: je.status || null,
+      };
+    });
+
+    // "Ultime manutenzioni eseguite": le più recenti, col nome del task
+    const jobExecutions = elementJobs.slice(0, 20).map((je) => ({
+      id: je.id,
+      name: je.maintenance_list?.name || "—",
+      execution_date: je.execution_date,
+      ending_date: je.ending_date,
+      status: je.status ? { name: je.status.name } : null,
+    }));
+
+    const jobExecutionIds = elementJobs.map((j) => j.id);
 
     const [vocalNotesRaw, textNotesRaw, photographyNotesRaw] = await Promise.all([
       VocalNote.findAll({ where: { task_id: jobExecutionIds }, raw: true }),
@@ -263,8 +279,8 @@ exports.getElement = async (req, res) => {
         model: childModels.find(m => m.id === ce.element_model_id) || null,
       })),
       spares: spares.map(s => s.toJSON()),
-      maintenances: maintenances.map(m => m.toJSON()),
-      jobExecutions: jobExecutions.map(j => j.toJSON()),
+      maintenances: maintenances,
+      jobExecutions: jobExecutions,
       readings: readings.map(r => r.toJSON()),
       scans,
       failures,

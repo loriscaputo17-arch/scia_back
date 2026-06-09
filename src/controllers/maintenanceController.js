@@ -41,351 +41,195 @@ const upload = multer({ storage: storage });
 exports.getJobs = async (req, res) => {
   try {
     const { type_id, page = 1, limit = 30, stato, ricorrenza, livello, ricambi, element_id, eswbs_code, days_from, days_to } = req.query;
-    
-    if (Array.isArray(eswbs_code)) {
-      eswbs_code = eswbs_code[0];
-    }
-    
-    const ship_id = req.shipAccess?.shipId;
 
+    // normalizza (può arrivare come array) + sanifica (finisce in LIKE)
+    let eswbsCode = Array.isArray(eswbs_code) ? eswbs_code[0] : eswbs_code;
+    if (eswbsCode) eswbsCode = String(eswbsCode).replace(/[^A-Za-z0-9-]/g, "");
+
+    const ship_id = req.shipAccess?.shipId;
     if (!ship_id) return res.status(400).json({ error: "Missing ship_id" });
 
     const offset = (Number(page) - 1) * Number(limit);
-    const limitN  = Number(limit);
+    const limitN = Number(limit);
 
     const typeFilter = (type_id && type_id !== "undefined")
-      ? `AND je.recurrency_type_id = ${parseInt(type_id)}`
-      : "";
+      ? `AND je.recurrency_type_id = ${parseInt(type_id)}` : "";
 
-    const recurrenceMap = {
-      settimanale:   [2],
-      bisettimanale: [7],
-      mensile:       [3],
-      bimestrale:    [8],
-      trimestrale:   [4],
-      semestrale:    [30, 40],
-      annuale:       [5],
-      biennale:      [9],
-      triennale:     [10],
-    };
-
-    const levelMap = {
-      aBordo:           [1, 2],    
-      inBanchina:       [3],       
-      inBacino:         [5, 6],    
-      fornitoreEsterno: [4],       
-    };
+    const recurrenceMap = { settimanale:[2], bisettimanale:[7], mensile:[3], bimestrale:[8], trimestrale:[4], semestrale:[30,40], annuale:[5], biennale:[9], triennale:[10] };
+    const levelMap = { aBordo:[1,2], inBanchina:[3], inBacino:[5,6], fornitoreEsterno:[4] };
 
     let extraFilters = "";
 
     if (ricorrenza) {
-      const keys = ricorrenza.split(",");
-      const ids = keys.flatMap((k) => recurrenceMap[k] || []);
-      if (ids.length) {
-        extraFilters += ` AND je.recurrency_type_id IN (${ids.join(",")})`;
-      }
+      const ids = ricorrenza.split(",").flatMap((k) => recurrenceMap[k] || []);
+      if (ids.length) extraFilters += ` AND je.recurrency_type_id IN (${ids.join(",")})`;
     }
-
     if (livello) {
-      const keys = livello.split(",");
-      const ids = keys.flatMap((k) => levelMap[k] || []);
-      console.log("livello filter:", { keys, ids });
-      if (ids.length) {
-        extraFilters += ` AND ml.MaintenanceLevel_ID IN (${ids.map(id => `'${id}'`).join(",")})`;
-      }
+      const ids = livello.split(",").flatMap((k) => levelMap[k] || []);
+      if (ids.length) extraFilters += ` AND ml.MaintenanceLevel_ID IN (${ids.map((id) => `'${id}'`).join(",")})`;
     }
 
-    {/*if (element_id) {
+    // 🔑 il fix dell'anomalia: elemento esatto, oppure prefisso solo per la vista globale
+    if (element_id && element_id !== "undefined") {
       extraFilters += ` AND je.element_eswbs_instance_id = ${parseInt(element_id)}`;
-    }*/}
-
-    if (eswbs_code) {
-      extraFilters += `
-        AND (
-          em.LCN LIKE '${eswbs_code}%'
-          OR em_sys.LCN LIKE '${eswbs_code}%'
-          OR em_end.LCN LIKE '${eswbs_code}%'
-          OR em_maint.LCN LIKE '${eswbs_code}%'
-        )
-      `;
+    } else if (eswbsCode) {
+      extraFilters += ` AND em.LCN LIKE '${eswbsCode}%'`;
     }
 
     if (days_from || days_to) {
       const from = days_from ? parseInt(days_from) : null;
-      const to   = days_to   ? parseInt(days_to)   : null;
-
-      if (from !== null && to !== null) {
-        extraFilters += ` AND rt.to_days BETWEEN ${from} AND ${to}`;
-      } else if (from !== null) {
-        extraFilters += ` AND rt.to_days >= ${from}`;
-      } else if (to !== null) {
-        extraFilters += ` AND rt.to_days <= ${to}`;
-      }
+      const to = days_to ? parseInt(days_to) : null;
+      if (from !== null && to !== null) extraFilters += ` AND rt.to_days BETWEEN ${from} AND ${to}`;
+      else if (from !== null) extraFilters += ` AND rt.to_days >= ${from}`;
+      else if (to !== null) extraFilters += ` AND rt.to_days <= ${to}`;
     }
 
     const filterRicambi = ricambi === "richiesti";
 
     const [rows] = await sequelize.query(`
       SELECT
-        je.id,
-        je.job_id,
-        je.status_id,
-        je.pauseDate,
-        je.user_id,
-        je.element_eswbs_instance_id,
-        je.starting_date,
-        je.ending_date,
-        je.data_recovery_expiration,
-        je.execution_date,
-        je.attachment_link,
-        je.recurrency_type_id,
-        je.ship_id,
-        je.execution_state,
-        rt.delay_threshold,
-        rt.due_threshold,
-        rt.early_threshold,
-        ml.MaintenanceLevel_ID,
-
-        -- ── Calcolo scadenza in SQL ─────────────────────────────────────────
+        je.id, je.execution_state, je.starting_date, je.ending_date,
+        rt.delay_threshold, rt.due_threshold, rt.early_threshold,
         CASE
           WHEN je.execution_date IS NOT NULL AND rt.to_days > 0
             THEN DATE_ADD(je.execution_date, INTERVAL rt.to_days DAY)
-
           WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) REGEXP 'every[[:space:]]+[0-9.,]+[[:space:]]+(hour|hours)'
-            THEN DATE_ADD(je.execution_date, INTERVAL
-              ROUND(
-                CAST(REPLACE(REPLACE(
-                  REGEXP_SUBSTR(LOWER(rt.name), '[0-9.,]+'), '.', ''), ',', '.') AS DECIMAL(10,2))
-                / 24
-              ) DAY)
-
+            THEN DATE_ADD(je.execution_date, INTERVAL ROUND(CAST(REPLACE(REPLACE(REGEXP_SUBSTR(LOWER(rt.name),'[0-9.,]+'),'.',''),',','.') AS DECIMAL(10,2))/24) DAY)
           WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) REGEXP 'every[[:space:]]+[0-9.,]+[[:space:]]+(day|days)'
-            THEN DATE_ADD(je.execution_date, INTERVAL
-              CAST(REPLACE(REPLACE(
-                REGEXP_SUBSTR(LOWER(rt.name), '[0-9.,]+'), '.', ''), ',', '.') AS DECIMAL(10,2))
-              DAY)
-
+            THEN DATE_ADD(je.execution_date, INTERVAL CAST(REPLACE(REPLACE(REGEXP_SUBSTR(LOWER(rt.name),'[0-9.,]+'),'.',''),',','.') AS DECIMAL(10,2)) DAY)
           WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) REGEXP 'every[[:space:]]+[0-9.,]+[[:space:]]+(week|weeks)'
-            THEN DATE_ADD(je.execution_date, INTERVAL
-              ROUND(
-                CAST(REPLACE(REPLACE(
-                  REGEXP_SUBSTR(LOWER(rt.name), '[0-9.,]+'), '.', ''), ',', '.') AS DECIMAL(10,2))
-                * 7
-              ) DAY)
-
+            THEN DATE_ADD(je.execution_date, INTERVAL ROUND(CAST(REPLACE(REPLACE(REGEXP_SUBSTR(LOWER(rt.name),'[0-9.,]+'),'.',''),',','.') AS DECIMAL(10,2))*7) DAY)
           WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) REGEXP 'every[[:space:]]+[0-9.,]+[[:space:]]+(month|months)'
-            THEN DATE_ADD(je.execution_date, INTERVAL
-              CAST(REPLACE(REPLACE(
-                REGEXP_SUBSTR(LOWER(rt.name), '[0-9.,]+'), '.', ''), ',', '.') AS DECIMAL(10,2))
-              MONTH)
-
+            THEN DATE_ADD(je.execution_date, INTERVAL CAST(REPLACE(REPLACE(REGEXP_SUBSTR(LOWER(rt.name),'[0-9.,]+'),'.',''),',','.') AS DECIMAL(10,2)) MONTH)
           WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) REGEXP 'every[[:space:]]+[0-9.,]+[[:space:]]+(year|years)'
-            THEN DATE_ADD(je.execution_date, INTERVAL
-              CAST(REPLACE(REPLACE(
-                REGEXP_SUBSTR(LOWER(rt.name), '[0-9.,]+'), '.', ''), ',', '.') AS DECIMAL(10,2))
-              YEAR)
-
-          -- sinonimi fissi
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'daily'
-            THEN DATE_ADD(je.execution_date, INTERVAL 1 DAY)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('weekly', 'every 2 weeks')
-            THEN DATE_ADD(je.execution_date, INTERVAL 7 DAY)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'biweekly'
-            THEN DATE_ADD(je.execution_date, INTERVAL 14 DAY)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'monthly'
-            THEN DATE_ADD(je.execution_date, INTERVAL 1 MONTH)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'quarterly'
-            THEN DATE_ADD(je.execution_date, INTERVAL 3 MONTH)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('semiannual','every 6 months')
-            THEN DATE_ADD(je.execution_date, INTERVAL 6 MONTH)
-          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('yearly','annually')
-            THEN DATE_ADD(je.execution_date, INTERVAL 1 YEAR)
-
-          -- fallback: ending_date se presente
-          WHEN je.ending_date IS NOT NULL
-            THEN je.ending_date
-
+            THEN DATE_ADD(je.execution_date, INTERVAL CAST(REPLACE(REPLACE(REGEXP_SUBSTR(LOWER(rt.name),'[0-9.,]+'),'.',''),',','.') AS DECIMAL(10,2)) YEAR)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'daily' THEN DATE_ADD(je.execution_date, INTERVAL 1 DAY)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('weekly','every 2 weeks') THEN DATE_ADD(je.execution_date, INTERVAL 7 DAY)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'biweekly' THEN DATE_ADD(je.execution_date, INTERVAL 14 DAY)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'monthly' THEN DATE_ADD(je.execution_date, INTERVAL 1 MONTH)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) = 'quarterly' THEN DATE_ADD(je.execution_date, INTERVAL 3 MONTH)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('semiannual','every 6 months') THEN DATE_ADD(je.execution_date, INTERVAL 6 MONTH)
+          WHEN je.execution_date IS NOT NULL AND LOWER(rt.name) IN ('yearly','annually') THEN DATE_ADD(je.execution_date, INTERVAL 1 YEAR)
+          WHEN je.ending_date IS NOT NULL THEN je.ending_date
           ELSE NULL
-        END AS computed_expiry_date,
-
-        -- ── Gruppo per ordinamento ──────────────────────────────────────────
-        CASE
-          WHEN je.execution_state IN ('1','3') THEN 2   -- marcate → in fondo
-          ELSE 0
-        END AS sort_group
-
+        END AS computed_expiry_date
       FROM JobExecution je
       LEFT JOIN Maintenance ml ON ml.id = je.job_id
-      LEFT JOIN RecurrencyType   rt ON rt.id  = je.recurrency_type_id
+      LEFT JOIN RecurrencyType rt ON rt.id = je.recurrency_type_id
       LEFT JOIN Element e ON e.id = je.element_eswbs_instance_id
       LEFT JOIN ElementModel em ON em.id = e.element_model_id
-      LEFT JOIN ElementModel em_sys   ON em_sys.id = ml.System_ElementModel_ID
-      LEFT JOIN ElementModel em_end   ON em_end.id = ml.End_Item_ElementModel_ID
-      LEFT JOIN ElementModel em_maint ON em_maint.id = ml.Maintenance_Item_ElementModel_ID
       WHERE je.ship_id = ${parseInt(ship_id)}
-      AND je.recurrency_type_id NOT IN (6, 13)
-      AND LOWER(rt.name) != 'daily'
-      AND LOWER(rt.name) NOT REGEXP 'every[[:space:]]+1[[:space:]]+(day|days)$'
-      ${typeFilter}
-      ${extraFilters}
+        AND je.recurrency_type_id NOT IN (6, 13)
+        AND LOWER(rt.name) != 'daily'
+        AND LOWER(rt.name) NOT REGEXP 'every[[:space:]]+1[[:space:]]+(day|days)$'
+        ${typeFilter}
+        ${extraFilters}
     `);
 
-    // ── 2. Ordina in JS usando computed_expiry_date già calcolata ───────────
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0)
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
 
     const sorted = rows.sort((a, b) => {
       const getGroup = (job) => {
-        // ✅ Completati/marcati → sempre in fondo
         if (job.execution_state === "1" || job.execution_state === "3") return 3;
-
         const expiry = job.computed_expiry_date ? new Date(job.computed_expiry_date) : null;
-        const delay = Number(job.delay_threshold ?? 0);
-        const due   = Number(job.due_threshold   ?? 0);
-        const early = Number(job.early_threshold  ?? 0);
-
+        const delay = Number(job.delay_threshold ?? 0), due = Number(job.due_threshold ?? 0);
         if (expiry) {
-          const expiryMidnight = new Date(expiry);
-          expiryMidnight.setUTCHours(0, 0, 0, 0);
-          const daysLeft = Math.ceil((expiryMidnight - today) / 86400000);
-
-          if (daysLeft <= -delay) return 0;        // ✅ scaduta (rosso) → primissimi
-          if (daysLeft <= 0)      return 1;        // ✅ scaduta da poco (arancione) → secondi
-          if (daysLeft <= due)    return 2;        // ✅ in scadenza (giallo) → terzi
+          const em = new Date(expiry); em.setUTCHours(0, 0, 0, 0);
+          const daysLeft = Math.ceil((em - today) / 86400000);
+          if (daysLeft <= -delay) return 0;
+          if (daysLeft <= 0) return 1;
+          if (daysLeft <= due) return 2;
         }
-
-        return 3; // attiva / programmata / nessuna scadenza → dopo
+        return 3;
       };
-
       const gA = getGroup(a), gB = getGroup(b);
       if (gA !== gB) return gA - gB;
-
-      // ── A parità di gruppo, ordina per data scadenza crescente ──
       if (!a.computed_expiry_date && !b.computed_expiry_date) return 0;
       if (!a.computed_expiry_date) return 1;
       if (!b.computed_expiry_date) return -1;
-
       return new Date(a.computed_expiry_date) - new Date(b.computed_expiry_date);
     });
 
     let filtered = sorted;
     if (stato) {
       const statiAttivi = stato.split(",");
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0)
-
       filtered = sorted.filter((job) => {
         const expiry = job.computed_expiry_date ? new Date(job.computed_expiry_date) : null;
-
-        const delay = Number(job.delay_threshold ?? 0);
-        const due   = Number(job.due_threshold   ?? 0);
-        const early = Number(job.early_threshold  ?? 0);
-
-        if (job.id === sorted[0]?.id) {
-          console.log("SAMPLE JOB:", {
-            id: job.id,
-            computed_expiry_date: job.computed_expiry_date,
-            expiry: expiry?.toISOString(),
-            today: today.toISOString(),
-            daysLeft: expiry ? Math.ceil((expiry - today) / 86400000) : null,
-            early, due, delay,
-            execution_state: job.execution_state,
-          });
-        }
-
-        const isInPausa     = job.execution_state === "2";
+        const delay = Number(job.delay_threshold ?? 0), due = Number(job.due_threshold ?? 0), early = Number(job.early_threshold ?? 0);
+        const isInPausa = job.execution_state === "2";
         const isProgrammata = job.starting_date && new Date(job.starting_date) > today;
-
-        // ── Calcola colore identico a StatusBadge ──────────────────────────────
         let color = "transparent";
         if (expiry) {
-          const expiryMidnight = new Date(expiry);
-          expiryMidnight.setUTCHours(0, 0, 0, 0);
-          const daysLeft = Math.ceil((expiryMidnight - today) / 86400000);
-        if      (daysLeft > early)   color = "transparent";          
-          else if (daysLeft > due)     color = "green";                
-          else if (daysLeft > 0)       color = "yellow";               
-          else if (daysLeft >= -delay) color = "orange";               
-          else                         color = "red";                  
+          const em = new Date(expiry); em.setUTCHours(0, 0, 0, 0);
+          const daysLeft = Math.ceil((em - today) / 86400000);
+          if (daysLeft > early) color = "transparent";
+          else if (daysLeft > due) color = "green";
+          else if (daysLeft > 0) color = "yellow";
+          else if (daysLeft >= -delay) color = "orange";
+          else color = "red";
         }
-
-        return statiAttivi.some((s) => {
-          if (s === "attiva"        && color === "green")                    return true;
-          if (s === "inScadenza"    && color === "yellow")                   return true;
-          if (s === "scadutaDaPoco" && color === "orange")                   return true;
-          if (s === "scaduta"       && color === "red")                      return true;
-          if (s === "inPausa"       && isInPausa)                           return true;
-          if (s === "programmata"   && isProgrammata)                       return true;
-          return false;
-        });
+        return statiAttivi.some((s) =>
+          (s === "attiva" && color === "green") ||
+          (s === "inScadenza" && color === "yellow") ||
+          (s === "scadutaDaPoco" && color === "orange") ||
+          (s === "scaduta" && color === "red") ||
+          (s === "inPausa" && isInPausa) ||
+          (s === "programmata" && isProgrammata)
+        );
       });
     }
+
     const total = filtered.length;
     const paginated = filtered.slice(offset, offset + limitN);
+    const pageIds = paginated.map((p) => p.id);
 
-    const enrichedJobs = await Promise.all(
-      paginated.map(async (jobRaw) => {
-        const job = await JobExecution.findOne({
-          where: { id: jobRaw.id },
-          include: [
-            {
-              model: Maintenance_List,
-              as: "maintenance_list",
-              required: false,
-              include: [
-                { model: maintenanceLevel, as: "maintenance_level", required: false },
-                { model: recurrencyType,   as: "recurrency_type",   required: false },
-                { model: ElemetModel, as: "system_element_model",            required: false },
-                { model: ElemetModel, as: "end_item_element_model",          required: false },
-                { model: ElemetModel, as: "maintenance_item_element_model",  required: false },
-              ],
-            },
-            { model: JobStatus, as: "status", required: false },
-            {
-              model: Element, as: "Element", required: false,
-              include: [{ model: ElemetModel, as: "element_model", required: false }],
-            },
-            { model: VocalNote,        as: "vocalNotes",        where: { type: "maintenance" }, required: false },
-            { model: TextNote,         as: "textNotes",         where: { type: "maintenance" }, required: false },
-            { model: PhotographicNote, as: "photographicNotes", where: { type: "maintenance" }, required: false },
-          ],
-        });
+    // ⚡ UNA query con gli include (invece di N findOne)
+    const jobs = pageIds.length ? await JobExecution.findAll({
+      where: { id: pageIds },
+      include: [
+        { model: Maintenance_List, as: "maintenance_list", required: false, include: [
+            { model: maintenanceLevel, as: "maintenance_level", required: false },
+            { model: recurrencyType, as: "recurrency_type", required: false },
+            { model: ElemetModel, as: "system_element_model", required: false },
+            { model: ElemetModel, as: "end_item_element_model", required: false },
+            { model: ElemetModel, as: "maintenance_item_element_model", required: false },
+        ]},
+        { model: JobStatus, as: "status", required: false },
+        { model: Element, as: "Element", required: false, include: [{ model: ElemetModel, as: "element_model", required: false }] },
+        { model: VocalNote, as: "vocalNotes", where: { type: "maintenance" }, required: false },
+        { model: TextNote, as: "textNotes", where: { type: "maintenance" }, required: false },
+        { model: PhotographicNote, as: "photographicNotes", where: { type: "maintenance" }, required: false },
+      ],
+    }) : [];
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
 
-        const ml = job.maintenance_list;
-        const elementModel = job.Element?.element_model;
-
-        const modelIds = [
-          elementModel?.id,
-          ml?.System_ElementModel_ID,
-          ml?.End_Item_ElementModel_ID,
-          ml?.Maintenance_Item_ElementModel_ID,
-        ].filter(Boolean);
-
-        const spares = modelIds.length
-          ? await Spare.findAll({ where: { element_model_id: modelIds } })
-          : [];
-
-        return {
-          ...job.toJSON(),
-          spares,
-          computed_expiry_date: jobRaw.computed_expiry_date ?? null,
-        };
-      })
-    );
-
-    let result = enrichedJobs;
-    if (filterRicambi) {
-      result = enrichedJobs.filter(
-        (job) => Array.isArray(job.spares) && job.spares.length > 0
-      );
+    // ⚡ UNA query ricambi per tutta la pagina
+    const allModelIds = new Set();
+    for (const job of jobs) {
+      const ml = job.maintenance_list, em = job.Element?.element_model;
+      [em?.id, ml?.System_ElementModel_ID, ml?.End_Item_ElementModel_ID, ml?.Maintenance_Item_ElementModel_ID]
+        .filter(Boolean).forEach((id) => allModelIds.add(id));
+    }
+    const allSpares = allModelIds.size ? await Spare.findAll({ where: { element_model_id: [...allModelIds] } }) : [];
+    const sparesByModel = new Map();
+    for (const sp of allSpares) {
+      if (!sparesByModel.has(sp.element_model_id)) sparesByModel.set(sp.element_model_id, []);
+      sparesByModel.get(sp.element_model_id).push(sp);
     }
 
-    res.status(200).json({
-      jobs: result,
-      total: filtered.length,                              
-      hasMore: offset + limitN < filtered.length,          
-    });
+    const enrichedJobs = paginated.map((jobRaw) => {
+      const job = jobById.get(jobRaw.id);
+      if (!job) return null;
+      const ml = job.maintenance_list, em = job.Element?.element_model;
+      const modelIds = [em?.id, ml?.System_ElementModel_ID, ml?.End_Item_ElementModel_ID, ml?.Maintenance_Item_ElementModel_ID].filter(Boolean);
+      const spares = modelIds.flatMap((id) => sparesByModel.get(id) || []);
+      return { ...job.toJSON(), spares, computed_expiry_date: jobRaw.computed_expiry_date ?? null };
+    }).filter(Boolean);
 
+    let result = enrichedJobs;
+    if (filterRicambi) result = enrichedJobs.filter((j) => Array.isArray(j.spares) && j.spares.length > 0);
+
+    res.status(200).json({ jobs: result, total, hasMore: offset + limitN < total });
   } catch (error) {
     console.error("Error fetching jobs:", error);
     res.status(500).json({ error: "Error fetching jobs" });
@@ -394,105 +238,47 @@ exports.getJobs = async (req, res) => {
 
 exports.getJobsOnCondition = async (req, res) => {
   try {
-    const { page = 1, limit = 30, eswbs_code } = req.query;
-    const ship_id = req.shipAccess?.shipId;
+    const { eswbs_code, element_id } = req.query;
+    let eswbsCode = Array.isArray(eswbs_code) ? eswbs_code[0] : eswbs_code;
+    if (eswbsCode) eswbsCode = String(eswbsCode).replace(/[^A-Za-z0-9-]/g, "");
 
+    const ship_id = req.shipAccess?.shipId;
     if (!ship_id) return res.status(400).json({ error: "Missing ship_id" });
 
-    const offset = (Number(page) - 1) * Number(limit);
-    const limitN  = Number(limit);
-
     let extraFilters = "";
-
-    // ✅ filtro ESWBS (uguale al tuo)
-    if (eswbs_code) {
-      extraFilters += `
-        AND (
-          em.LCN LIKE '${eswbs_code}%'
-          OR em_sys.LCN LIKE '${eswbs_code}%'
-          OR em_end.LCN LIKE '${eswbs_code}%'
-          OR em_maint.LCN LIKE '${eswbs_code}%'
-        )
-      `;
+    if (element_id && element_id !== "undefined") {
+      extraFilters += ` AND je.element_eswbs_instance_id = ${parseInt(element_id)}`;
+    } else if (eswbsCode) {
+      extraFilters += ` AND em.LCN LIKE '${eswbsCode}%'`;
     }
 
-    // 🔥 QUI LA DIFFERENZA
-    const onConditionFilter = `
-      AND je.recurrency_type_id IN (6, 13)
-    `;
-
     const [rows] = await sequelize.query(`
-      SELECT
-        je.id,
-        je.job_id,
-        je.status_id,
-        je.pauseDate,
-        je.user_id,
-        je.element_eswbs_instance_id,
-        je.starting_date,
-        je.ending_date,
-        je.execution_date,
-        je.recurrency_type_id,
-        je.ship_id,
-        je.execution_state,
-        rt.delay_threshold,
-        rt.due_threshold,
-        rt.early_threshold
-
+      SELECT je.id
       FROM JobExecution je
-      LEFT JOIN Maintenance ml ON ml.id = je.job_id
-      LEFT JOIN RecurrencyType rt ON rt.id = je.recurrency_type_id
       LEFT JOIN Element e ON e.id = je.element_eswbs_instance_id
       LEFT JOIN ElementModel em ON em.id = e.element_model_id
-      LEFT JOIN ElementModel em_sys   ON em_sys.id = ml.System_ElementModel_ID
-      LEFT JOIN ElementModel em_end   ON em_end.id = ml.End_Item_ElementModel_ID
-      LEFT JOIN ElementModel em_maint ON em_maint.id = ml.Maintenance_Item_ElementModel_ID
-
       WHERE je.ship_id = ${parseInt(ship_id)}
-      ${onConditionFilter}
-      ${extraFilters}
+        AND je.recurrency_type_id IN (6, 13)
+        ${extraFilters}
     `);
 
-    // 🔥 puoi riusare la stessa logica enrichment
-    const enrichedJobs = await Promise.all(
-      rows.map(async (jobRaw) => {
-        const job = await JobExecution.findOne({
-          where: { id: jobRaw.id },
-          include: [
-            {
-              model: Maintenance_List,
-              as: "maintenance_list",
-              required: false,
-              include: [
-                { model: maintenanceLevel, as: "maintenance_level", required: false },
-                { model: recurrencyType,   as: "recurrency_type",   required: false },
-                { model: ElemetModel, as: "system_element_model", required: false },
-                { model: ElemetModel, as: "end_item_element_model", required: false },
-                { model: ElemetModel, as: "maintenance_item_element_model", required: false },
-              ],
-            },
-            { model: JobStatus, as: "status", required: false },
-            {
-              model: Element,
-              as: "Element",
-              required: false,
-              include: [
-                { model: ElemetModel, as: "element_model", required: false },
-              ],
-            },
-          ],
-        });
+    const ids = rows.map((r) => r.id);
+    const jobs = ids.length ? await JobExecution.findAll({
+      where: { id: ids },
+      include: [
+        { model: Maintenance_List, as: "maintenance_list", required: false, include: [
+            { model: maintenanceLevel, as: "maintenance_level", required: false },
+            { model: recurrencyType, as: "recurrency_type", required: false },
+            { model: ElemetModel, as: "system_element_model", required: false },
+            { model: ElemetModel, as: "end_item_element_model", required: false },
+            { model: ElemetModel, as: "maintenance_item_element_model", required: false },
+        ]},
+        { model: JobStatus, as: "status", required: false },
+        { model: Element, as: "Element", required: false, include: [{ model: ElemetModel, as: "element_model", required: false }] },
+      ],
+    }) : [];
 
-        return job.toJSON();
-      })
-    );
-
-    res.status(200).json({
-      jobs: enrichedJobs,
-      total: enrichedJobs.length,
-      hasMore: false,
-    });
-
+    res.status(200).json({ jobs: jobs.map((j) => j.toJSON()), total: jobs.length, hasMore: false });
   } catch (error) {
     console.error("Error fetching jobs on condition:", error);
     res.status(500).json({ error: "Error fetching jobs on condition" });
