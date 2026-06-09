@@ -13,7 +13,8 @@ exports.addFailure = async (req, res) => {
       userExecution,
       partNumber,
       customFields,
-      ship_id
+      ship_id, element_id, eswbs_code,
+      component_name
     } = req.body;
 
     const newFailure = await Failures.create({
@@ -25,7 +26,7 @@ exports.addFailure = async (req, res) => {
       userExecution,
       partNumber,
       customFields,
-      ship_id
+      ship_id, element_id, eswbs_code, component_name,
     });
 
     return res.status(201).json({ message: "Failure created successfully", failure: newFailure });
@@ -49,10 +50,14 @@ exports.getFailures = async (req, res) => {
       where: failuresWhere,
       order: [["date", "DESC"]],
       include: [
+        { model: User, as: "userExecutionData", required: false },
         {
-          model: User,
-          as: "userExecutionData",
+          model: Element,
+          as: "element",
           required: false,
+          include: [
+            { model: ElemetModel, as: "element_model", required: false },
+          ],
         },
       ],
     });
@@ -143,3 +148,31 @@ exports.getFailures = async (req, res) => {
   }
 };
 
+exports.getFailureById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const failure = await Failures.findByPk(id, {
+      include: [
+        { model: User, as: "userExecutionData", required: false },
+        {
+          model: Element,
+          as: "element",
+          required: false,
+          include: [
+            { model: ElemetModel, as: "element_model", required: false },
+          ],
+        },
+      ],
+    });
+
+    if (!failure) {
+      return res.status(404).json({ error: "Failure not found" });
+    }
+
+    return res.status(200).json({ failure });
+  } catch (error) {
+    console.error("Error fetching failure:", error);
+    return res.status(500).json({ error: "Error retrieving failure" });
+  }
+};

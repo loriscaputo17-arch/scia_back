@@ -1,7 +1,7 @@
 const { recurrencyType, maintenanceLevel, Maintenance_List, Team,
   JobExecution, Spare, JobStatus, Element, ElemetModel, StatusCommentsMaintenance, VocalNote, 
   TextNote, PhotographicNote, sequelize, Maintenance_ListConsumable,
-   Maintenance_ListTools, Consumable, Maintenance_ListSpare, Tool } = require("../models");
+   Maintenance_ListTools, Consumable, Maintenance_ListSpare, Tool, User } = require("../models");
 
 require('dotenv').config();
 const bcrypt = require("bcryptjs");
@@ -727,15 +727,8 @@ exports.reportAnomaly = async (req, res) => {
       return res.status(404).json({ error: "JobExecution not found" });
     }
 
-    // -------------------------------
-    // 🛑 CASO ANOMALIA (mark === 3)
-    // -------------------------------
     if (mark === 3) {
       jobExecution.execution_state = 3;
-
-      // ❌ NON aggiornare execution_date
-      // ❌ NON aggiornare ending_date
-      // ❌ NON creare nuova istanza
 
       await jobExecution.save();
 
@@ -745,9 +738,6 @@ exports.reportAnomaly = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // ✔️ CASI NORMALI (mark = 0,1,2 ecc → continua la ricorrenza)
-    // --------------------------------------------------------
     const recurrencyInfo = await recurrencyType.findByPk(jobExecution.recurrency_type_id);
 
     if (!recurrencyInfo || !recurrencyInfo.to_days) {
@@ -909,3 +899,56 @@ exports.markAsOk = async (req, res) => {
   }
 };
 
+exports.exportCompletedReport = async (req, res) => {
+  try {
+    const { ship_id, from, to } = req.query;
+    if (!ship_id) return res.status(400).json({ error: "ship_id richiesto" });
+
+   const where = {
+      ship_id,
+      execution_state: { [Op.in]: ["1", "3"] },   // 1 = OK, 3 = anomalia (entrambe "effettuate")
+    };
+    if (from || to) {
+      where.execution_date = {};
+      if (from) where.execution_date[Op.gte] = new Date(from);
+      if (to)   where.execution_date[Op.lte] = new Date(`${to}T23:59:59`);
+    }
+
+    const jobs = await JobExecution.findAll({
+      where,
+      order: [["execution_date", "DESC"]],
+      include: [
+        { model: Maintenance_List, as: "maintenance_list", required: false },
+        { model: Element, as: "Element", required: false,
+          include: [{ model: ElemetModel, as: "element_model", required: false }] },
+        { model: JobStatus, as: "status", required: false },
+      ],
+    });
+
+    // risolvi i nomi utente in una sola query
+    const userIds = [...new Set(jobs.map((j) => j.user_id).filter(Boolean))];
+    const users = userIds.length
+      ? await User.findAll({ where: { id: userIds } })
+      : [];
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    const rows = jobs.map((j) => {
+      const u = userById.get(j.user_id);
+      return {
+        id: j.id,
+        task: j.maintenance_list?.name || "",
+        eswbs: j.Element?.element_model?.ESWBS_code || "",
+        componente: j.Element?.element_model?.LCN_name || "",
+        esecutore: u ? `${u.first_name} ${u.last_name}` : "",
+        data_esecuzione: j.execution_date,
+        stato: j.status?.name || "",
+        esito: j.execution_state === "3" ? "Anomalia" : j.execution_state === "1" ? "OK" : "—",
+      };
+    });
+
+    return res.status(200).json({ rows });
+  } catch (error) {
+    console.error("Error exporting completed report:", error);
+    return res.status(500).json({ error: "Errore generazione report" });
+  }
+};

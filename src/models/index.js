@@ -186,6 +186,8 @@ Warehouses.hasMany(Location, {
   as: "locations",
 });
 
+Failures.belongsTo(Element, { foreignKey: "element_id", as: "element" });
+
 /* -------------------------- RELAZIONI NOTE ↔ JOB EXECUTION -------------------------- */
 JobExecution.hasMany(VocalNote, { foreignKey: "task_id", as: "vocalNotes" });
 VocalNote.belongsTo(JobExecution, { foreignKey: "task_id", as: "jobExecution" });

@@ -31,6 +31,9 @@ const Failures = sequelize.define('Failures', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  element_id: { type: DataTypes.INTEGER, allowNull: true },
+  eswbs_code: { type: DataTypes.STRING(50), allowNull: true },
+  component_name: { type: DataTypes.STRING(255), allowNull: true },
   partNumber: {
     type: DataTypes.STRING,
     allowNull: true,

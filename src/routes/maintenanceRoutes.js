@@ -71,4 +71,6 @@ router.patch("/markAsOk/:id",
   maintenanceController.markAsOk
 );
 
+router.get("/exportCompletedReport", maintenanceController.exportCompletedReport);
+
 module.exports = router;

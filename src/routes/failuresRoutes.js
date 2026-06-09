@@ -182,4 +182,6 @@ router.post("/addFailure", failureController.addFailure);
  */
 router.get("/getFailures", failureController.getFailures);
 
+router.get("/getFailure/:id", failureController.getFailureById);
+
 module.exports = router;
