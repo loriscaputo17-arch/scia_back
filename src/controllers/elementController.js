@@ -86,7 +86,7 @@ exports.getElement = async (req, res) => {
       return res.status(400).json({ error: "Missing element or ship_id in request body" });
     }
 
-    const LEGACY_MAX_ID = 3660;   // soglia: ID < di questo = "vecchio"
+    const LEGACY_MAX_ID = 3661;   // soglia: ID < di questo = "vecchio"
     const LEGACY_OFFSET = 2207;   // scarto vecchio→nuovo
 
     let elementData = await Element.findOne({
