@@ -581,35 +581,64 @@ exports.fetchSpareById = async (req, res) => {
   try {
     const { ean13, partNumber, eswbsSearch } = req.query;
 
-    const where = {};
-    if (ean13) where.ean13 = ean13;
-    if (partNumber) where.serial_number = partNumber;
-    if (eswbsSearch) where.eswbsSearch = eswbsSearch;
+    const andConditions = [];
 
-    const spares = await Spare.findAll({ where }); // 👈 rimosso include Warehouses
+    if (ean13) andConditions.push({ ean13 });
 
+    // Part Number: cerca su Spare.Serial_number OPPURE su Parts.Part_Number (se collegato)
+    if (partNumber) {
+      andConditions.push({
+        [Op.or]: [
+          { Serial_number: { [Op.like]: `%${partNumber}%` } },
+          { "$part.Part_Number$": { [Op.like]: `%${partNumber}%` } },
+        ],
+      });
+    }
+
+    const where = andConditions.length ? { [Op.and]: andConditions } : {};
+
+    const spares = await Spare.findAll({
+      where,
+      include: [
+        {
+          model: ElemetModel,
+          as: "elementModel",
+          ...(eswbsSearch
+            ? { where: { ESWBS_code: eswbsSearch }, required: true }
+            : { required: false }),
+        },
+        {
+          model: Parts,
+          as: "part",
+          required: false,
+          include: [{ model: OrganizationCompanyNCAGE, as: "organizationCompanyNCAGE" }],
+        },
+      ],
+      subQuery: false, // necessario perché filtriamo su una colonna dell'include ($part.Part_Number$)
+    });
+
+    // arricchimento location/warehouse
     for (const spare of spares) {
       const locationIds = typeof spare.location === "string"
-        ? spare.location.split(",").map(id => parseInt(id.trim(), 10))
+        ? spare.location.split(",").map((id) => parseInt(id.trim(), 10)).filter((n) => !isNaN(n))
         : [];
 
-      const locations = await Location.findAll({
-        where: { id: { [Op.in]: locationIds } },
-        attributes: ["id", "location", "ship_id", "warehouse_id"],
-      });
-
+      const locations = locationIds.length
+        ? await Location.findAll({
+            where: { id: { [Op.in]: locationIds } },
+            attributes: ["id", "location", "ship_id", "warehouse_id"],
+          })
+        : [];
       spare.dataValues.locationData = locations;
 
-      // carica warehouse separatamente
-      const warehouseIds = [...new Set(locations.map(l => l.warehouse_id).filter(Boolean))];
+      const warehouseIds = [...new Set(locations.map((l) => l.warehouse_id).filter(Boolean))];
       const warehouses = warehouseIds.length
         ? await Warehouses.findAll({ where: { id: warehouseIds }, attributes: ["id", "name", "icon_url"] })
         : [];
-      spare.dataValues.warehouseData = warehouses.map(w => w.toJSON());
+      spare.dataValues.warehouseData = warehouses.map((w) => w.toJSON());
     }
 
     res.status(200).json({ spares });
-
   } catch (error) {
     console.error("Error fetching spares:", error);
     res.status(500).json({ error: "Error fetching spares" });
@@ -619,70 +648,50 @@ exports.fetchSpareById = async (req, res) => {
 exports.submitProduct = async (req, res) => {
   try {
     const {
-      quantity,
-      eswbs,
-      description,
-      ship_id,
-      user_id,
+      ship_id, user_id,
+      originalName,     // → Part_name
+      partNumber,       // → Serial_number
       ean13,
-      partNumber,
-      originalName,
-      supplier,
-      supplierNcage,
-      manufacturerNcage,
-      manufacturerPartNumber,
-      price,
-      leadTime,
-      warehouse,
-      location,
-      stock,
-      image,
+      price,            // → Unitary_price
+      stock,            // → quantity
+      warehouse,        // → warehouse (int)
+      location,         // testo ubicazione → crea/recupera Location, salva l'ID
+      element_model_id, // se lo conosci dall'ESWBS scelto
     } = req.body;
 
-    //console.log(req.body)
-
-    let locationRecord = await Location.findOne({
-      where: {
-        location: location,
-        ship_id: ship_id,
-        user_id: user_id
-      }
-    });
-
-    if (!locationRecord) {
-      locationRecord = await Location.create({
-        warehouse_id: warehouse,
-        location: location,
-        ship_id: ship_id,
-        user_id: user_id
-      });
+    if (!ship_id || !user_id || !partNumber) {
+      return res.status(400).json({ error: "ship_id, user_id e partNumber sono obbligatori" });
     }
 
-    const newLocationId = locationRecord.id;
+    // ubicazione: trova o crea, poi salva l'ID in Spare.location
+    let newLocationId = null;
+    if (location) {
+      let locationRecord = await Location.findOne({ where: { location, ship_id, user_id } });
+      if (!locationRecord) {
+        locationRecord = await Location.create({
+          warehouse_id: warehouse || 1,
+          location,
+          ship_id,
+          user_id,
+        });
+      }
+      newLocationId = locationRecord.id;
+    }
 
     const newSpare = await Spare.create({
-      name: originalName,
-      original_denomination: originalName,
-      serial_number: partNumber,
-      company: supplier,
-      NCAGE: manufacturerNcage,
-      NCAGE_supplier: supplierNcage,
-      price: price,
-      quantity:stock,
-      ean13,
-      eswbs,
-      description: description,
+      Part_name:      originalName || null,
+      Serial_number:  partNumber,          // NOT NULL nello schema → obbligatorio
+      Unitary_price:  price || null,
+      quantity:       stock || null,
+      ean13:          ean13 || null,
+      warehouse:      warehouse || null,
+      location:       newLocationId ? String(newLocationId) : null,
       ship_id,
-      user_id: user_id,
-      warehouse,
-      image: image,
-      location: newLocationId
+      user_id,
+      element_model_id: element_model_id || null,
     });
 
-    res.status(201).json({
-      message: "Spare created successfully",
-      spare: newSpare
-    });
+    res.status(201).json({ message: "Spare created successfully", spare: newSpare });
   } catch (error) {
     console.error("Error submitting product:", error);
     res.status(500).json({ error: "Error submitting product" });
