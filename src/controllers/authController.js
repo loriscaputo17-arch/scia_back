@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const SECRET_KEY = "supersecretkey";
 const { getUserPermissions } = require("../middleware/auth");
+const { validatePin } = require("../utils/validatePin");
 
 exports.loginWithEmail = async (req, res) => {
   const { email, password } = req.body;
@@ -13,8 +14,6 @@ exports.loginWithEmail = async (req, res) => {
     if (!userLogin) {
       return res.status(401).json({ error: "Credentials are not valid." });
     }
-
-    console.log(password)
 
     const isMatch = await bcrypt.compare(password, userLogin.password_hash);
     if (!isMatch) {
@@ -40,11 +39,27 @@ exports.loginWithPin = async (req, res) => {
   }
 
   try {
-    // 1. Trova l'utente dal PIN (il PIN è personale, non globale)
-    const userLogin = await UserLogin.findOne({
-      where: { pin, pin_enabled: true },
+    const candidates = await UserLogin.findAll({
+      where: { pin_enabled: true, pin: { [require("sequelize").Op.ne]: null } },
       include: { model: User, as: "user" },
     });
+
+    let userLogin = null;
+    for (const c of candidates) {
+      if (!c.user) continue;
+      let match = false;
+      if (c.pin.startsWith("$2")) {
+        match = await bcrypt.compare(pin, c.pin);        // nuovo: hash
+      } else {
+        match = c.pin === pin;                            // vecchio: chiaro (4 cifre)
+        if (match) {
+          // migrazione trasparente → ri-hasho il vecchio PIN
+          const hash = await bcrypt.hash(pin, 10);
+          await c.update({ pin: hash });
+        }
+      }
+      if (match) { userLogin = c; break; }
+    }
 
     if (!userLogin || !userLogin.user) {
       return res.status(401).json({ error: "PIN non valido o disabilitato." });
@@ -52,17 +67,16 @@ exports.loginWithPin = async (req, res) => {
 
     const userId = userLogin.user.id;
 
-    // 2. Verifica che l'utente abbia accesso alla nave richiesta
-    //    TeamShipAccess → Team → TeamMembers → User
+    // 2. Verifica accesso alla nave (INVARIATO)
     const hasAccess = await TeamShipAccess.findOne({
       where: { ship_id: shipId },
       include: {
         model: Team,
-        as: "Team",          // deve corrispondere all'alias definito sopra
+        as: "Team",
         required: true,
         include: {
           model: TeamMember,
-          as: "teamTeamMembers",   // alias già definito nel tuo index.js
+          as: "teamTeamMembers",
           where: { user_id: userId },
           required: true,
         },
@@ -70,29 +84,19 @@ exports.loginWithPin = async (req, res) => {
     });
 
     if (!hasAccess) {
-      return res
-        .status(403)
-        .json({ error: "Utente non autorizzato per questa nave." });
+      return res.status(403).json({ error: "Utente non autorizzato per questa nave." });
     }
 
-    // 3. Carica i permessi dell'utente, filtrati sulla nave specifica
+    // 3. Permessi (INVARIATO)
     const ships = await getUserPermissions(userId);
     const shipPermissions = ships.find((s) => s.shipId === Number(shipId));
-
     if (!shipPermissions) {
-      return res
-        .status(403)
-        .json({ error: "Nessun permesso trovato per questa nave." });
+      return res.status(403).json({ error: "Nessun permesso trovato per questa nave." });
     }
 
-    // 4. Emetti il token con contesto completo
+    // 4. Token (INVARIATO)
     const token = jwt.sign(
-      {
-        userId,
-        shipId: Number(shipId),
-        // Moduli accessibili su questa nave specifica
-        modules: shipPermissions.modules,
-      },
+      { userId, shipId: Number(shipId), modules: shipPermissions.modules },
       process.env.SECRET_KEY,
       { expiresIn: "8h" }
     );
@@ -104,51 +108,31 @@ exports.loginWithPin = async (req, res) => {
   }
 };
 
-/*
-exports.loginWithPin = async (req, res) => {
-  const { pin } = req.body;
-
-  try {
-    const userLogin = await UserLogin.findOne({
-      where: { pin, pin_enabled: true },
-      include: { model: User, as: "user" },
-    });
-
-    if (!userLogin || !userLogin.user) {
-      return res.status(401).json({ error: "PIN non valido o disabilitato." });
-    }
-
-    const token = jwt.sign({ userId: userLogin.user.id }, process.env.SECRET_KEY);
-
-    // ✅ Imposta il token nei cookie (identico al login con email)
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "Lax",
-      maxAge: 2 * 60 * 60 * 1000, // 2 ore
-    });
-    
-
-    res.json({ message: "Login PIN effettuato" });
-  } catch (error) {
-    console.error("Errore durante il login con PIN:", error);
-    res.status(500).json({ error: "Errore durante il login rapido" });
-  }
-};*/
-
 exports.setPin = async (req, res) => {
   const { email, pin } = req.body;
 
-  if (!/^\d{4}$/.test(pin)) {
-    return res.status(400).json({ error: "The PIN must consist of 4 digits." });
-  }
+  // Formato 8 cifre + regole
+  const check = validatePin(pin);
+  if (!check.valid) return res.status(400).json({ error: check.error });
 
   try {
-    const [updated] = await UserLogin.update({ pin }, { where: { email } });
+    const me = await UserLogin.findOne({ where: { email } });
+    if (!me) return res.status(404).json({ error: "User not found." });
 
-    if (updated === 0) {
-      return res.status(404).json({ error: "User not found." });
+    // Univocità tra utenti
+    const { Op } = require("sequelize");
+    const others = await UserLogin.findAll({
+      where: { email: { [Op.ne]: email }, pin: { [Op.ne]: null } },
+      attributes: ["id", "pin"],
+    });
+    for (const u of others) {
+      const same = u.pin.startsWith("$2") ? await bcrypt.compare(pin, u.pin) : u.pin === pin;
+      if (same) return res.status(400).json({ error: "Scegli un PIN diverso." });
     }
+
+    const hash = await bcrypt.hash(pin, 10);
+    const [updated] = await UserLogin.update({ pin: hash }, { where: { email } });
+    if (updated === 0) return res.status(404).json({ error: "User not found." });
 
     res.json({ message: "PIN updated successfully." });
   } catch (error) {
@@ -276,15 +260,27 @@ exports.updateUserSecuritySettings = async (req, res) => {
     };
 
     if (pin) {
-      if (!/^\d{4}$/.test(pin)) {
-        return res.status(400).json({ error: "PIN must be exactly 4 digits." });
+      // Formato 8 cifre + regole
+      const check = validatePin(pin);
+      if (!check.valid) return res.status(400).json({ error: check.error });
+
+      // Univocità tra utenti
+      const { Op } = require("sequelize");
+      const others = await UserLogin.findAll({
+        where: { user_id: { [Op.ne]: userId }, pin: { [Op.ne]: null } },
+        attributes: ["id", "pin"],
+      });
+      for (const u of others) {
+        const same = u.pin.startsWith("$2") ? await bcrypt.compare(pin, u.pin) : u.pin === pin;
+        if (same) return res.status(400).json({ error: "Scegli un PIN diverso." });
       }
-      updateData.pin = pin;
+
+      const hash = await bcrypt.hash(pin, 10);
+      updateData.pin = hash;
       updateData.pin_enabled = true;
     }
 
     await user.update(updateData);
-
     res.json({ message: "Security settings updated successfully." });
 
   } catch (error) {

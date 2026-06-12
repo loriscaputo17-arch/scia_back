@@ -224,20 +224,14 @@ exports.getUsers = async (req, res) => {
         {
           model: User,
           as: "user",
-          include: [
-            {
-              model: UserRole,
-              as: "role",
-            },
-          ],
+          include: [{ model: UserRole, as: "role" }],
         },
         {
           model: Team,
           as: "team",
-        },
-        {
-          model: Ship,
-          as: "ship",
+          include: [
+            { model: Ship, as: "ship" },   // ← la nave sta sotto il team
+          ],
         },
       ],
     });
@@ -248,13 +242,12 @@ exports.getUsers = async (req, res) => {
 
     const usersData = teamMembers.map((member) => {
       const user = member.user;
-      const userRole = user.role;
-
+      const userRole = user?.role;
       return {
         ...user?.toJSON?.(),
         isLeader: member.is_leader,
         team: member.team ? member.team.toJSON() : null,
-        ship: member.ship ? member.ship.toJSON() : null,
+        ship: member.team?.ship ? member.team.ship.toJSON() : null,  // ← da member.team.ship
         role: userRole ? userRole.toJSON() : null,
       };
     });
