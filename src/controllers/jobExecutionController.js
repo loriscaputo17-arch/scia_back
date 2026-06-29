@@ -1,31 +1,5 @@
 const { JobExecution, Job, Ship, Element, JobStatus } = require("../models");
 
-// Get all executions of a specific Ship
-exports.getExecutionsByShip = async (req, res) => {
-    try {
-        const { shipId } = req.params;
-
-        const executions = await JobExecution.findAll({
-            include: [
-                { model: Job, attributes: ["name"] },
-                { 
-                    model: Element, 
-                    attributes: ["name"], 
-                    include: [
-                        { model: Ship, attributes: ["unit_name"], where: { id: shipId } }
-                    ]
-                },
-                { model: JobStatus, attributes: ["name"] }
-            ]
-        });
-
-        res.json(executions);
-    } catch (error) {
-        console.error("❌ Error:", error);
-        res.status(500).json({ error: error.message });
-    }
-};
-
 // Get details of a single execution
 exports.getExecutionById = async (req, res) => {
     try {

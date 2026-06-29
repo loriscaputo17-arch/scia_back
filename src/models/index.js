@@ -1,7 +1,6 @@
 const sequelize = require("../config/db");
 
 // Import modelli
-const Job = require("./job");
 const Element = require("./element");
 const Ship = require("./ship");
 const JobStatus = require("./jobStatus");
@@ -15,7 +14,6 @@ const Spare = require("./spare");
 const RanksMarine = require("./RanksMarine");
 const Task = require("./task");
 const recurrencyType = require("./recurrencyType");
-const Facilities = require("./facilities");
 const Cart = require("./cart");
 const Location = require("./location");
 const Warehouses = require("./warehouses");
@@ -366,7 +364,6 @@ const db = {
   Maintenance_ListConsumable,
   Maintenance_ListSpare,
   Maintenance_ListTools,
-  Job,
   Element,
   Ship,
   JobStatus,
@@ -380,7 +377,6 @@ const db = {
   RanksMarine,
   Task,
   recurrencyType,
-  Facilities,
   Cart,
   Location,
   Warehouses,

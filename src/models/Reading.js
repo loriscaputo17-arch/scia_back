@@ -19,6 +19,14 @@ const Reading = sequelize.define("Readings", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  task_name_en: {                    
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  task_name_es: {                   
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
   eswbs_id: {
     type: DataTypes.STRING,
   },

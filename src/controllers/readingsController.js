@@ -44,6 +44,8 @@ exports.getReadings = async (req, res) => {
         r.user_id,
         r.ship_id,
         r.task_name,
+        r.task_name_en,
+        r.task_name_es,
         r.eswbs_id,
         r.recurrence,
         r.value,
@@ -101,18 +103,20 @@ exports.getReadings = async (req, res) => {
     `);
 
     const readings = rows.map((r) => ({
-      id:          r.id,
-      user_id:     r.user_id,
-      ship_id:     r.ship_id,
-      task_name:   r.task_name,
-      eswbs_id:    r.eswbs_id,
-      recurrence:  r.recurrence,
-      value:       r.value,
-      unit:        r.unit,
-      due_date:    r.due_date,
-      description: r.description,
-      tags:        r.tags,
-      team:        r.team,
+      id:           r.id,
+      user_id:      r.user_id,
+      ship_id:      r.ship_id,
+      task_name:    r.task_name,
+      task_name_en: r.task_name_en,   // 🌐
+      task_name_es: r.task_name_es,   // 🌐
+      eswbs_id:     r.eswbs_id,
+      recurrence:   r.recurrence,
+      value:        r.value,
+      unit:         r.unit,
+      due_date:     r.due_date,
+      description:  r.description,
+      tags:         r.tags,
+      team:         r.team,
 
       type: r.type_id ? {
         id:   r.type_id,
@@ -168,6 +172,8 @@ exports.getReading = async (req, res) => {
         r.user_id,
         r.ship_id,
         r.task_name,
+        r.task_name_en,
+        r.task_name_es,
         r.eswbs_id,
         r.recurrence,
         r.value,
@@ -277,6 +283,8 @@ exports.getReading = async (req, res) => {
       user_id:         r.user_id,
       ship_id:         r.ship_id,
       task_name:       r.task_name,
+      task_name_en:    r.task_name_en,   // 🌐
+      task_name_es:    r.task_name_es,   // 🌐
       eswbs_id:        r.eswbs_id,
       recurrence:      r.recurrence,
       value:           r.value,
@@ -354,4 +362,3 @@ exports.updateReading = async (req, res) => {
     res.status(500).json({ error: "Errore nell'aggiornamento della lettura." });
   }
 };
-

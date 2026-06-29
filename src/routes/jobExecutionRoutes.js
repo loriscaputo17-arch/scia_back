@@ -4,55 +4,6 @@ const jobExecutionController = require("../controllers/jobExecutionController");
 
 /**
  * @swagger
- * tags:
- *   name: JobExecutions
- *   description: Gestione esecuzioni job nave
- */
-
-/**
- * @swagger
- * /jobs-executions/execution/ship/{shipId}:
- *   get:
- *     summary: Recupera tutte le esecuzioni di una nave
- *     description: Restituisce le esecuzioni filtrate per nave, con job, elemento e stato associati
- *     tags: [JobExecutions]
- *     parameters:
- *       - in: path
- *         name: shipId
- *         required: true
- *         schema:
- *           type: integer
- *         example: 1
- *         description: ID della nave
- *     responses:
- *       200:
- *         description: Lista esecuzioni recuperata con successo
- *         content:
- *           application/json:
- *             example:
- *               - id: 1
- *                 job_id: 3
- *                 element_id: 5
- *                 status_id: 2
- *                 job:
- *                   name: "Ispezione motore"
- *                 element:
- *                   name: "Motore Principale"
- *                   ship:
- *                     unit_name: "Nave Aurora"
- *                 jobStatus:
- *                   name: "Completato"
- *       500:
- *         description: Errore server
- *         content:
- *           application/json:
- *             example:
- *               error: "Messaggio errore"
- */
-router.get("/execution/ship/:shipId", jobExecutionController.getExecutionsByShip);
-
-/**
- * @swagger
  * /jobs-executions/execution/{executionId}:
  *   get:
  *     summary: Recupera il dettaglio di una singola esecuzione
