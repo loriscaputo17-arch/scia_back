@@ -6,6 +6,8 @@ const Tool = sequelize.define("Tool", {
   element_model_id: { type: DataTypes.INTEGER },
   ship_id: { type: DataTypes.INTEGER },
   Tool_name: { type: DataTypes.STRING(255), allowNull: false },
+  Tool_name_en: { type: DataTypes.STRING, allowNull: true },   
+  Tool_name_es: { type: DataTypes.STRING, allowNull: true },   
   Serial_number: { type: DataTypes.STRING(255) },
   Original_description_OEM: { type: DataTypes.STRING(100) },
   Part_Number_OEM: { type: DataTypes.STRING(100) },

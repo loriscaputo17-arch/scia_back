@@ -359,7 +359,7 @@ exports.getElements = async (req, res) => {
         {
           model: ElemetModel,
           as: "element_model",
-          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID"],
+          attributes: ["id", "parent_element_model_id", "ESWBS_code", "LCNtype_ID", "LCN_name", "LCN_name_en", "LCN_name_es"],
           where: {
             ...(lcnTypes?.length && { LCNtype_ID: { [Op.in]: lcnTypes } }),
             //ESWBS_code: { [Op.notLike]: "%0" },
@@ -376,6 +376,8 @@ exports.getElements = async (req, res) => {
       map[el.id] = {
         id: el.id.toString(),
         name: el.name,
+        name_en: el.element_model?.LCN_name_en || null,  
+        name_es: el.element_model?.LCN_name_es || null,
         code: el.serial_number,
         LCNtype_ID: el.element_model?.LCNtype_ID,
         eswbs_code: el.element_model?.ESWBS_code,

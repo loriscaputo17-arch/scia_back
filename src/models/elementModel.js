@@ -21,6 +21,8 @@ const ElementModel = sequelize.define("ElementModel", {
     type: DataTypes.TEXT,
     allowNull: false,
   },
+  LCN_name_en: { type: DataTypes.STRING(255), allowNull: true },
+  LCN_name_es: { type: DataTypes.STRING(255), allowNull: true },
   Supplier_ID: DataTypes.TEXT,
   Installed_quantity_on_End_Item: DataTypes.INTEGER,
   Manufacturer_ID: DataTypes.TEXT,
@@ -51,6 +53,8 @@ const ElementModel = sequelize.define("ElementModel", {
   ElementModel_installation_drawing_link: DataTypes.TEXT,
   Yearly_Operating_Hours: DataTypes.INTEGER,
   Yearly_Operating_Hours_during_missions: DataTypes.INTEGER,
+  LCN_name_en: { type: DataTypes.STRING, allowNull: true },
+  LCN_name_es: { type: DataTypes.STRING, allowNull: true },   
   Criticality_Code_CC: {
     type: DataTypes.TINYINT,
     comment: "1=NON CRITICO, 2=DEGRADATO, 3=MANCATO FUNZIONAMENTO",

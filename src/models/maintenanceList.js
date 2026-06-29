@@ -49,6 +49,8 @@ const Maintenance_List = sequelize.define('Maintenance', {
     type: DataTypes.STRING(100),
     field: 'Item_no_on_Maintenance_Item'
   },
+  name_en: { type: DataTypes.STRING, allowNull: true },
+  name_es: { type: DataTypes.STRING, allowNull: true },
   Reference_document_page: DataTypes.STRING(100),
   Maintenance_type_id: DataTypes.INTEGER,
 }, {

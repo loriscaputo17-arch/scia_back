@@ -105,6 +105,8 @@ const Spare = sequelize.define('Spare', {
     type: DataTypes.STRING(100),
     allowNull: true,
   },
+  Part_name_en: { type: DataTypes.STRING(255), allowNull: true },   
+  Part_name_es: { type: DataTypes.STRING(255), allowNull: true }, 
 }, {
   tableName: 'Spare',
   timestamps: false,
