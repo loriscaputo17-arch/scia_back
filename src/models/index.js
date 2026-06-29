@@ -54,6 +54,7 @@ const Tool = require("./tool");
 const Maintenance_ListConsumable = require("./maintenanceListConsumable");
 const Maintenance_ListSpare = require("./maintenanceListSpare");
 const Maintenance_ListTools = require("./maintenanceListTools");
+const PinLoginAttempt = require("./PinLoginAttempt");
 
 /* -------------------------- RELAZIONI OWNER / SHIPYARD -------------------------- */
 Owner.belongsTo(OrganizationCompanyNCAGE, {
@@ -412,7 +413,8 @@ const db = {
   AppModule,
   TeamElementAccess,
   TeamModulePermission,
-  TeamShipAccess
+  TeamShipAccess,
+  PinLoginAttempt
 };
 
 module.exports = db;

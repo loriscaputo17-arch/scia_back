@@ -1,11 +1,74 @@
-const { UserLogin, User, TeamShipAccess, Team, TeamMember } = require("../models");
+const {
+  UserLogin,
+  User,
+  TeamShipAccess,
+  Team,
+  TeamMember,
+  PinLoginAttempt,    // 🔒 nuovo: tracking tentativi PIN
+  sequelize,          // per raw query univocità per nave
+} = require("../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const SECRET_KEY = "supersecretkey";
 const { getUserPermissions } = require("../middleware/auth");
 const { validatePin } = require("../utils/validatePin");
+const { Op } = require("sequelize");
 
+// ─── Config sicurezza PIN ────────────────────────────────────────────────────
+const PIN_MAX_ATTEMPTS = 5;            // tentativi prima del blocco
+const PIN_LOCK_DURATION_MIN = 15;      // durata blocco in minuti
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Estrae l'IP client. Se l'app sta dietro proxy (Nginx, Cloudflare),
+// app.set('trust proxy', true) va impostato in app.js perché req.ip
+// rifletta x-forwarded-for in modo affidabile.
+function getClientIp(req) {
+  const xff = req.headers["x-forwarded-for"];
+  if (xff) return String(xff).split(",")[0].trim();
+  return req.ip || req.connection?.remoteAddress || "unknown";
+}
+
+// Restituisce gli user che condividono almeno una nave con `userId`
+// (escluso `userId` stesso) e hanno un PIN impostato.
+// Usato per controllare l'univocità del PIN PER NAVE (non globale).
+async function findUsersOnSameShips(userId) {
+  const [rows] = await sequelize.query(
+    `
+    SELECT DISTINCT ul.user_id, ul.pin
+    FROM UserLogin ul
+    JOIN TeamMembers tm  ON tm.user_id  = ul.user_id
+    JOIN TeamShipAccess tsa ON tsa.team_id = tm.team_id
+    WHERE tsa.ship_id IN (
+      SELECT tsa2.ship_id
+      FROM TeamMembers tm2
+      JOIN TeamShipAccess tsa2 ON tsa2.team_id = tm2.team_id
+      WHERE tm2.user_id = ?
+    )
+    AND ul.user_id <> ?
+    AND ul.pin IS NOT NULL
+    `,
+    { replacements: [userId, userId] }
+  );
+  return rows;
+}
+
+// Verifica che il PIN proposto non sia già in uso da un altro utente
+// che condivide almeno una nave. Restituisce true se l'univocità è rispettata.
+async function isPinUniqueForUserShips(userId, plainPin) {
+  const others = await findUsersOnSameShips(userId);
+  for (const u of others) {
+    if (!u.pin) continue;
+    const same = u.pin.startsWith("$2")
+      ? await bcrypt.compare(plainPin, u.pin)
+      : u.pin === plainPin;
+    if (same) return false;
+  }
+  return true;
+}
+
+// ─── LOGIN EMAIL+PASSWORD (INVARIATO) ────────────────────────────────────────
 exports.loginWithEmail = async (req, res) => {
   const { email, password } = req.body;
 
@@ -31,6 +94,17 @@ exports.loginWithEmail = async (req, res) => {
   }
 };
 
+// ─── LOGIN PIN (con lockout + pre-filtro candidati PER NAVE) ─────────────────
+//
+// 🔒 FIX: prima di cercare il PIN, restringiamo i candidati ai soli utenti
+// che hanno effettivamente accesso a `shipId` (via TeamMembers + TeamShipAccess).
+// Con l'univocità PIN "per nave" due utenti su navi diverse possono avere
+// LO STESSO PIN: senza pre-filtro il loop poteva matchare il PIN di un altro
+// utente NON autorizzato per la nave richiesta, far fallire il login e
+// nascondere quello legittimo. Ora la ricerca è deterministica.
+//
+// Bonus: meno bcrypt.compare da fare → più veloce.
+//
 exports.loginWithPin = async (req, res) => {
   const { pin, shipId } = req.body;
 
@@ -38,38 +112,97 @@ exports.loginWithPin = async (req, res) => {
     return res.status(400).json({ error: "PIN e shipId sono obbligatori." });
   }
 
+  const clientIp = getClientIp(req);
+  const shipIdNum = Number(shipId);
+
   try {
+    // 1. Verifica lockout per (IP, nave)
+    let attemptRow = await PinLoginAttempt.findOne({
+      where: { ip: clientIp, ship_id: shipIdNum },
+    });
+
+    if (attemptRow?.locked_until) {
+      const now = new Date();
+      if (attemptRow.locked_until > now) {
+        const remainingMs = attemptRow.locked_until.getTime() - now.getTime();
+        const remainingMin = Math.ceil(remainingMs / 60000);
+        return res.status(423).json({
+          error: `Troppi tentativi falliti. Riprova tra ${remainingMin} minuti.`,
+          lockedUntil: attemptRow.locked_until,
+          remainingMinutes: remainingMin,
+        });
+      }
+      // Lock scaduto: pulisci e prosegui
+      await attemptRow.update({ locked_until: null, attempts: 0 });
+    }
+
+    // 2. 🔒 Pre-filtro: trova SOLO gli user_id che hanno accesso a questa nave
+    //    e hanno il PIN abilitato. Usa una raw query per chiarezza.
+    const [accessRows] = await sequelize.query(
+      `
+      SELECT DISTINCT ul.user_id
+      FROM UserLogin ul
+      JOIN TeamMembers tm ON tm.user_id = ul.user_id
+      JOIN TeamShipAccess tsa ON tsa.team_id = tm.team_id
+      WHERE tsa.ship_id = ?
+        AND ul.pin_enabled = 1
+        AND ul.pin IS NOT NULL
+      `,
+      { replacements: [shipIdNum] }
+    );
+
+    const candidateUserIds = accessRows.map((r) => r.user_id);
+
+    // Nessun utente abilitato per questa nave → fail immediato (e registra tentativo)
+    if (candidateUserIds.length === 0) {
+      await registerFailedAttempt(clientIp, shipIdNum);
+      return res.status(401).json({ error: "PIN non valido o disabilitato." });
+    }
+
+    // 3. Carica solo i candidates con accesso alla nave (con istanze Sequelize per le update)
     const candidates = await UserLogin.findAll({
-      where: { pin_enabled: true, pin: { [require("sequelize").Op.ne]: null } },
+      where: {
+        user_id: { [Op.in]: candidateUserIds },
+        pin_enabled: true,
+        pin: { [Op.ne]: null },
+      },
       include: { model: User, as: "user" },
     });
 
+    // 4. Cerca il match del PIN tra i candidati pre-filtrati
     let userLogin = null;
     for (const c of candidates) {
       if (!c.user) continue;
       let match = false;
       if (c.pin.startsWith("$2")) {
-        match = await bcrypt.compare(pin, c.pin);        // nuovo: hash
+        match = await bcrypt.compare(pin, c.pin);
       } else {
-        match = c.pin === pin;                            // vecchio: chiaro (4 cifre)
+        match = c.pin === pin;
         if (match) {
-          // migrazione trasparente → ri-hasho il vecchio PIN
+          // Migrazione trasparente: ri-hasho i vecchi PIN in chiaro
           const hash = await bcrypt.hash(pin, 10);
           await c.update({ pin: hash });
         }
       }
-      if (match) { userLogin = c; break; }
+      if (match) {
+        userLogin = c;
+        break;
+      }
     }
 
+    // 5. Nessun match → tentativo fallito
     if (!userLogin || !userLogin.user) {
+      await registerFailedAttempt(clientIp, shipIdNum);
       return res.status(401).json({ error: "PIN non valido o disabilitato." });
     }
 
     const userId = userLogin.user.id;
 
-    // 2. Verifica accesso alla nave (INVARIATO)
+    // 6. (Ridondante ma difensivo) Verifica formale accesso alla nave.
+    //    Il pre-filtro lo garantisce già, ma manteniamo come check di sicurezza
+    //    nel caso le tabelle siano cambiate fra una query e l'altra.
     const hasAccess = await TeamShipAccess.findOne({
-      where: { ship_id: shipId },
+      where: { ship_id: shipIdNum },
       include: {
         model: Team,
         as: "Team",
@@ -84,19 +217,25 @@ exports.loginWithPin = async (req, res) => {
     });
 
     if (!hasAccess) {
+      await registerFailedAttempt(clientIp, shipIdNum);
       return res.status(403).json({ error: "Utente non autorizzato per questa nave." });
     }
 
-    // 3. Permessi (INVARIATO)
+    // 7. Permessi
     const ships = await getUserPermissions(userId);
-    const shipPermissions = ships.find((s) => s.shipId === Number(shipId));
+    const shipPermissions = ships.find((s) => s.shipId === shipIdNum);
     if (!shipPermissions) {
       return res.status(403).json({ error: "Nessun permesso trovato per questa nave." });
     }
 
-    // 4. Token (INVARIATO)
+    // 8. SUCCESS → reset tentativi
+    if (attemptRow) {
+      await attemptRow.update({ attempts: 0, locked_until: null });
+    }
+
+    // 9. Token
     const token = jwt.sign(
-      { userId, shipId: Number(shipId), modules: shipPermissions.modules },
+      { userId, shipId: shipIdNum, modules: shipPermissions.modules },
       process.env.SECRET_KEY,
       { expiresIn: "8h" }
     );
@@ -108,6 +247,34 @@ exports.loginWithPin = async (req, res) => {
   }
 };
 
+// Helper interno: registra un tentativo fallito ed eventualmente attiva il lock.
+async function registerFailedAttempt(ip, shipId) {
+  try {
+    let row = await PinLoginAttempt.findOne({ where: { ip, ship_id: shipId } });
+    if (!row) {
+      row = await PinLoginAttempt.create({
+        ip,
+        ship_id: shipId,
+        attempts: 1,
+        last_attempt_at: new Date(),
+      });
+    } else {
+      const newAttempts = (row.attempts || 0) + 1;
+      const update = { attempts: newAttempts, last_attempt_at: new Date() };
+      if (newAttempts >= PIN_MAX_ATTEMPTS) {
+        const lockUntil = new Date();
+        lockUntil.setMinutes(lockUntil.getMinutes() + PIN_LOCK_DURATION_MIN);
+        update.locked_until = lockUntil;
+      }
+      await row.update(update);
+    }
+  } catch (err) {
+    // Non fare crashare il login a causa del tracking
+    console.error("Errore tracking tentativo PIN:", err);
+  }
+}
+
+// ─── SET PIN (con univocità PER NAVE) ────────────────────────────────────────
 exports.setPin = async (req, res) => {
   const { email, pin } = req.body;
 
@@ -119,15 +286,13 @@ exports.setPin = async (req, res) => {
     const me = await UserLogin.findOne({ where: { email } });
     if (!me) return res.status(404).json({ error: "User not found." });
 
-    // Univocità tra utenti
-    const { Op } = require("sequelize");
-    const others = await UserLogin.findAll({
-      where: { email: { [Op.ne]: email }, pin: { [Op.ne]: null } },
-      attributes: ["id", "pin"],
-    });
-    for (const u of others) {
-      const same = u.pin.startsWith("$2") ? await bcrypt.compare(pin, u.pin) : u.pin === pin;
-      if (same) return res.status(400).json({ error: "Scegli un PIN diverso." });
+    // 🔒 Univocità PER NAVE: il PIN non deve coincidere con quello di un altro
+    // utente che condivide almeno una nave con `me.user_id`.
+    const isUnique = await isPinUniqueForUserShips(me.user_id, pin);
+    if (!isUnique) {
+      return res
+        .status(400)
+        .json({ error: "Scegli un PIN diverso: è già in uso su una nave a cui hai accesso." });
     }
 
     const hash = await bcrypt.hash(pin, 10);
@@ -141,12 +306,13 @@ exports.setPin = async (req, res) => {
   }
 };
 
+// ─── LOGOUT (INVARIATO) ──────────────────────────────────────────────────────
 exports.logout = (req, res) => {
   res.clearCookie("token");
   res.json({ message: "Logout successful" });
 };
 
-// Request to reset password
+// ─── FORGOT PASSWORD (INVARIATO) ─────────────────────────────────────────────
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -177,7 +343,7 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// Reset password
+// ─── RESET PASSWORD (INVARIATO) ──────────────────────────────────────────────
 exports.resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
@@ -200,9 +366,10 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
+// ─── GET SECURITY SETTINGS (INVARIATO) ───────────────────────────────────────
 exports.getUserSecuritySettings = async (req, res) => {
   try {
-    const userId = req.user?.userId || req.body.userId || req.query.userId; // Leggiamo userId
+    const userId = req.user?.userId || req.body.userId || req.query.userId;
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -224,14 +391,15 @@ exports.getUserSecuritySettings = async (req, res) => {
   }
 };
 
+// ─── UPDATE SECURITY SETTINGS (con univocità PER NAVE per il PIN) ────────────
 exports.updateUserSecuritySettings = async (req, res) => {
-  const { 
-    useBiometric, 
-    useQuickPin, 
-    pin, 
-    userId, 
-    oldPassword, 
-    newPassword 
+  const {
+    useBiometric,
+    useQuickPin,
+    pin,
+    userId,
+    oldPassword,
+    newPassword,
   } = req.body;
 
   try {
@@ -243,15 +411,12 @@ exports.updateUserSecuritySettings = async (req, res) => {
 
     if (newPassword) {
       const isValid = await bcrypt.compare(oldPassword, user.password_hash);
-
       if (!isValid) {
         return res.status(400).json({ error: "Old password incorrect." });
       }
-
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       await user.update({ password_hash: hashedPassword });
     }
-
 
     // --- PIN & SECURITY FLAGS ---
     let updateData = {
@@ -260,19 +425,16 @@ exports.updateUserSecuritySettings = async (req, res) => {
     };
 
     if (pin) {
-      // Formato 8 cifre + regole
+      // 1) Formato 8 cifre + regole
       const check = validatePin(pin);
       if (!check.valid) return res.status(400).json({ error: check.error });
 
-      // Univocità tra utenti
-      const { Op } = require("sequelize");
-      const others = await UserLogin.findAll({
-        where: { user_id: { [Op.ne]: userId }, pin: { [Op.ne]: null } },
-        attributes: ["id", "pin"],
-      });
-      for (const u of others) {
-        const same = u.pin.startsWith("$2") ? await bcrypt.compare(pin, u.pin) : u.pin === pin;
-        if (same) return res.status(400).json({ error: "Scegli un PIN diverso." });
+      // 2) 🔒 Univocità PER NAVE
+      const isUnique = await isPinUniqueForUserShips(userId, pin);
+      if (!isUnique) {
+        return res
+          .status(400)
+          .json({ error: "Scegli un PIN diverso: è già in uso su una nave a cui hai accesso." });
       }
 
       const hash = await bcrypt.hash(pin, 10);
@@ -282,7 +444,6 @@ exports.updateUserSecuritySettings = async (req, res) => {
 
     await user.update(updateData);
     res.json({ message: "Security settings updated successfully." });
-
   } catch (error) {
     console.error("Error updating security settings:", error);
     res.status(500).json({ error: "Error updating security settings" });

@@ -4,7 +4,9 @@ const bcrypt = require("bcryptjs");
 const {
   User, UserLogin, UserRole, TeamMember, Team,
   AppModule, TeamModulePermission, TeamElementAccess,
+  sequelize, // 🔒 per la query di univocità PIN per nave
 } = require("../models");
+const { validatePin } = require("../utils/validatePin");
 
 const ROLE_LABELS = {
   machine_maintainer: "Machine Maintainer",
@@ -23,9 +25,38 @@ function generatePassword() {
   return pwd;
 }
 
-// ─── Crea nuovo utente (password mostrata a schermo) ──────────────────────────
+// 🔒 Helper: il PIN proposto non deve coincidere con quello di nessun utente
+// che già accede ad almeno una delle navi del team `teamId`.
+// (Stessa logica usata in auth.controller.js, ma partendo da teamId perché
+// l'utente non esiste ancora in fase di creazione.)
+async function isPinUniqueForTeamShips(teamId, plainPin) {
+  const [rows] = await sequelize.query(
+    `
+    SELECT DISTINCT ul.user_id, ul.pin
+    FROM UserLogin ul
+    JOIN TeamMembers tm  ON tm.user_id  = ul.user_id
+    JOIN TeamShipAccess tsa ON tsa.team_id = tm.team_id
+    WHERE tsa.ship_id IN (
+      SELECT tsa2.ship_id FROM TeamShipAccess tsa2 WHERE tsa2.team_id = ?
+    )
+    AND ul.pin IS NOT NULL
+    `,
+    { replacements: [teamId] }
+  );
+
+  for (const u of rows) {
+    if (!u.pin) continue;
+    const same = u.pin.startsWith("$2")
+      ? await bcrypt.compare(plainPin, u.pin)
+      : u.pin === plainPin;
+    if (same) return false;
+  }
+  return true;
+}
+
+// ─── Crea nuovo utente (password mostrata a schermo, PIN opzionale) ───────────
 exports.createUser = async (req, res) => {
-  const { firstName, lastName, email, teamId, roleType, rank } = req.body;
+  const { firstName, lastName, email, teamId, roleType, rank, pin } = req.body;
 
   if (!firstName || !lastName || !email || !teamId) {
     return res.status(400).json({ error: "firstName, lastName, email e teamId sono obbligatori." });
@@ -37,6 +68,25 @@ exports.createUser = async (req, res) => {
 
     const team = await Team.findByPk(teamId);
     if (!team) return res.status(404).json({ error: "Team non trovato." });
+
+    // 🔒 Se è stato passato un PIN, validalo PRIMA di creare l'utente.
+    // In caso di errore non sporchiamo il DB con righe orfane.
+    let pinHash = null;
+    let pinEnabled = 0;
+    if (pin) {
+      const check = validatePin(pin);
+      if (!check.valid) return res.status(400).json({ error: check.error });
+
+      const isUnique = await isPinUniqueForTeamShips(teamId, pin);
+      if (!isUnique) {
+        return res.status(400).json({
+          error: "Il PIN scelto è già usato da un utente che ha accesso a una di queste navi. Sceglierne un altro.",
+        });
+      }
+
+      pinHash = await bcrypt.hash(pin, 10);
+      pinEnabled = 1;
+    }
 
     // 1. User
     const user = await User.create({
@@ -54,7 +104,8 @@ exports.createUser = async (req, res) => {
       user_id: user.id,
       email,
       password_hash: hash,
-      pin_enabled: 0,
+      pin: pinHash,                  // 🔒 hash bcrypt o null
+      pin_enabled: pinEnabled,       // 🔒 1 se PIN settato in creazione, 0 altrimenti
       biometric_enabled: 0,
     });
 
@@ -74,12 +125,13 @@ exports.createUser = async (req, res) => {
       is_leader: 0,
     });
 
-    // Password in chiaro RESTITUITA UNA SOLA VOLTA (da mostrare all'admin)
+    // Password (e flag PIN) RESTITUITE UNA SOLA VOLTA all'admin
     return res.json({
       message: "Utente creato.",
       userId: user.id,
       email,
       password: plainPassword,
+      pinSet: pinEnabled === 1,  // 🔒 indica se il PIN è stato impostato
     });
   } catch (error) {
     console.error("Errore creazione utente:", error);
@@ -105,14 +157,14 @@ exports.assignRole = async (req, res) => {
   const { userId } = req.params;
   const { roleType } = req.body;
 
-  const ROLE_LABELS = {
+  const ROLE_LABELS_INNER = {
     machine_maintainer: "Machine Maintainer",
     chief_engineer: "Chief Engineer",
     comand: "Comand",
     admin: "Admin",
     owner: "Owner",
   };
-  if (!ROLE_LABELS[roleType]) {
+  if (!ROLE_LABELS_INNER[roleType]) {
     return res.status(400).json({ error: "Ruolo non valido." });
   }
 
@@ -120,7 +172,7 @@ exports.assignRole = async (req, res) => {
     const role = await UserRole.findOne({ where: { user_id: userId } });
     if (!role) return res.status(404).json({ error: "Ruolo non trovato." });
     role.type = roleType;
-    role.role_name = ROLE_LABELS[roleType];
+    role.role_name = ROLE_LABELS_INNER[roleType];
     await role.save();
     return res.json({ message: "Ruolo aggiornato.", role });
   } catch (error) {
@@ -149,7 +201,6 @@ exports.assignUserElements = async (req, res) => {
 };
 
 // ─── MODULI a livello TEAM (TeamModulePermission) ─────────────────────────────
-// Lista moduli disponibili + permessi correnti del team su una nave
 exports.getTeamModules = async (req, res) => {
   const { teamId, shipId } = req.params;
   try {
@@ -174,10 +225,9 @@ exports.getTeamModules = async (req, res) => {
   }
 };
 
-// Aggiorna i permessi moduli del team (upsert per ogni modulo)
 exports.setTeamModules = async (req, res) => {
   const { teamId, shipId } = req.params;
-  const { modules } = req.body; // [{ module_id, can_read, can_write }, ...]
+  const { modules } = req.body;
   if (!Array.isArray(modules)) {
     return res.status(400).json({ error: "modules deve essere un array." });
   }
@@ -217,12 +267,11 @@ exports.getTeamElements = async (req, res) => {
 
 exports.setTeamElements = async (req, res) => {
   const { teamId, shipId } = req.params;
-  const { elementModelIds } = req.body; // array di element_model_id
+  const { elementModelIds } = req.body;
   if (!Array.isArray(elementModelIds)) {
     return res.status(400).json({ error: "elementModelIds deve essere un array." });
   }
   try {
-    // strategia semplice: cancella e reinserisci
     await TeamElementAccess.destroy({ where: { team_id: teamId, ship_id: shipId } });
     for (const emId of elementModelIds) {
       await TeamElementAccess.create({ team_id: teamId, ship_id: shipId, element_model_id: emId });
