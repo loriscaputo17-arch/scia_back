@@ -27,7 +27,7 @@ const Reading = sequelize.define("Readings", {
     type: DataTypes.STRING,
     allowNull: true,
   },
-  eswbs_id: {
+  eswbs_id: { 
     type: DataTypes.STRING,
   },
   recurrence: {
